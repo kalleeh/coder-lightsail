@@ -38,23 +38,57 @@ styled_box() { gum style --border double --padding "1 2" --border-foreground 6 "
 # ── WireGuard VPN helpers ────────────────────────────────────────────────────
 
 WG_TMPDIR=""
+WG_PEER_COUNT=1
+
+# Arrays for multi-peer support
+declare -a WG_PHONE_PRIVKEYS=()
+declare -a WG_PHONE_PUBKEYS=()
 
 setup_wireguard() {
+  local peer_count
+  peer_count=$(gum choose --header "How many devices to configure?" "1" "2" "3")
+  WG_PEER_COUNT="$peer_count"
+
   WG_TMPDIR=$(mktemp -d)
   # Generate server key pair
   wg genkey | tee "$WG_TMPDIR/server.key" | wg pubkey > "$WG_TMPDIR/server.pub"
-  # Generate phone key pair
-  wg genkey | tee "$WG_TMPDIR/phone.key" | wg pubkey > "$WG_TMPDIR/phone.pub"
 
   WG_SERVER_PRIVKEY=$(cat "$WG_TMPDIR/server.key")
   WG_SERVER_PUBKEY=$(cat "$WG_TMPDIR/server.pub")
-  WG_PHONE_PRIVKEY=$(cat "$WG_TMPDIR/phone.key")
-  WG_PHONE_PUBKEY=$(cat "$WG_TMPDIR/phone.pub")
+
+  # Generate key pairs for each device/peer
+  WG_PHONE_PRIVKEYS=()
+  WG_PHONE_PUBKEYS=()
+  for i in $(seq 1 "$peer_count"); do
+    wg genkey | tee "$WG_TMPDIR/phone${i}.key" | wg pubkey > "$WG_TMPDIR/phone${i}.pub"
+    WG_PHONE_PRIVKEYS+=("$(cat "$WG_TMPDIR/phone${i}.key")")
+    WG_PHONE_PUBKEYS+=("$(cat "$WG_TMPDIR/phone${i}.pub")")
+  done
 }
 
 build_cloud_init() {
-  local modified="$WG_TMPDIR/cloud-init-wg.yaml"
-  cp "$CLOUD_INIT" "$modified"
+  local user="${1:-ubuntu}"
+  local tmp_ci="$WG_TMPDIR/cloud-init-wg.yaml"
+  cp "$CLOUD_INIT" "$tmp_ci"
+
+  # Fix user paths per provider (#1)
+  # DigitalOcean and Hetzner use root as default user
+  if [[ "$user" == "root" ]]; then
+    sed "s|/home/ubuntu|/root|g; s|ubuntu:ubuntu|root:root|g; s|chsh -s /usr/bin/zsh ubuntu|chsh -s /usr/bin/zsh root|g; s|chown -R ubuntu:ubuntu|chown -R root:root|g" "$tmp_ci" > "${tmp_ci}.tmp"
+    mv "${tmp_ci}.tmp" "$tmp_ci"
+  fi
+
+  # Build WireGuard peer blocks for all devices
+  local peers_block=""
+  for i in $(seq 1 "$WG_PEER_COUNT"); do
+    local idx=$((i - 1))
+    local peer_ip="10.100.0.$((i + 1))"
+    peers_block+="
+      [Peer]  # Device ${i}
+      PublicKey = ${WG_PHONE_PUBKEYS[$idx]}
+      AllowedIPs = ${peer_ip}/32
+"
+  done
 
   # Append WireGuard server config to write_files section.
   # We insert it just before the "runcmd:" line so it lands inside write_files.
@@ -70,20 +104,17 @@ build_cloud_init() {
       PrivateKey = ${WG_SERVER_PRIVKEY}
       Address = 10.100.0.1/24
       ListenPort = 51820
-
-      [Peer]
-      PublicKey = ${WG_PHONE_PUBKEY}
-      AllowedIPs = 10.100.0.2/32
+${peers_block}
 WGEOF
   )
 
   # Insert WireGuard write_files entry before the runcmd section
   local tmp_insert="$WG_TMPDIR/cloud-init-insert.yaml"
-  awk -v wg="$wg_write_files" '/^runcmd:/ { print wg; print ""; } { print }' "$modified" > "$tmp_insert"
-  mv "$tmp_insert" "$modified"
+  awk -v wg="$wg_write_files" '/^runcmd:/ { print wg; print ""; } { print }' "$tmp_ci" > "$tmp_insert"
+  mv "$tmp_insert" "$tmp_ci"
 
   # Append WireGuard runcmd entries and firewall rules at the end
-  cat >> "$modified" <<'RUNCMD'
+  cat >> "$tmp_ci" <<'RUNCMD'
 
   # -- WireGuard VPN --
   - apt-get install -y wireguard
@@ -94,17 +125,28 @@ WGEOF
   - ufw --force enable
 RUNCMD
 
-  echo "$modified"
+  # Cloud-init completion marker (#8)
+  echo "  - touch /var/lib/cloud/.cloud-init-complete" >> "$tmp_ci"
+
+  echo "$tmp_ci"
 }
 
 show_qr() {
   local server_ip="$1" ssh_user="$2"
 
-  local phone_conf
-  phone_conf=$(cat <<PHONEEOF
+  gum style --bold --foreground 2 "WireGuard VPN configured!"
+  echo ""
+
+  # Show QR code for each device
+  for i in $(seq 1 "$WG_PEER_COUNT"); do
+    local idx=$((i - 1))
+    local peer_ip="10.100.0.$((i + 1))"
+
+    local phone_conf
+    phone_conf=$(cat <<PHONEEOF
 [Interface]
-PrivateKey = ${WG_PHONE_PRIVKEY}
-Address = 10.100.0.2/24
+PrivateKey = ${WG_PHONE_PRIVKEYS[$idx]}
+Address = ${peer_ip}/24
 DNS = 1.1.1.1
 
 [Peer]
@@ -113,23 +155,32 @@ Endpoint = ${server_ip}:51820
 AllowedIPs = 10.100.0.1/32
 PersistentKeepalive = 25
 PHONEEOF
-  )
+    )
 
-  gum style --bold --foreground 2 "WireGuard VPN configured!"
-  echo ""
-  gum style --bold "1. Scan this QR code with the WireGuard iOS app"
-  gum style --bold "2. Enable the tunnel"
-  gum style --bold "3. Connect:  ssh ${ssh_user}@10.100.0.1"
-  echo ""
+    if [[ "$WG_PEER_COUNT" -gt 1 ]]; then
+      gum style --bold --foreground 6 "── Device ${i} of ${WG_PEER_COUNT} ──"
+    fi
 
-  echo "$phone_conf" | qrencode -t ansiutf8
-  echo ""
+    gum style --bold "1. Scan this QR code with the WireGuard app"
+    gum style --bold "2. Enable the tunnel"
+    gum style --bold "3. Connect:  ssh ${ssh_user}@10.100.0.1"
+    echo ""
 
-  gum style --foreground 3 "Phone config (in case QR doesn't scan):"
-  echo "$phone_conf"
-  echo ""
+    echo "$phone_conf" | qrencode -t ansiutf8
+    echo ""
+
+    gum style --foreground 3 "Device ${i} config (in case QR doesn't scan):"
+    echo "$phone_conf"
+    echo ""
+  done
 
   styled_box "SSH over WireGuard:" "  ssh ${ssh_user}@10.100.0.1"
+
+  # Cloud-init progress note (#8)
+  echo ""
+  gum style --foreground 3 "Cloud-init is still configuring the server. Wait 2-3 minutes after"
+  gum style --foreground 3 "connecting before all tools are available."
+  gum style --foreground 3 "Check progress with: tail -f /var/log/cloud-init-output.log"
 }
 
 cleanup_wireguard() {
@@ -189,6 +240,7 @@ lima_destroy() {
   gum confirm "Destroy Lima VM '$target'? This is irreversible." || exit 0
   gum spin --title "Destroying '$target'..." -- limactl delete --force "$target"
   gum style --foreground 2 --bold "Destroyed '$target'."
+  gum style --foreground 3 "Remember to remove the WireGuard tunnel from your phone/device."
 }
 
 lima_status() {
@@ -201,7 +253,16 @@ lightsail_create() {
   local region bundle key_name name ssh_user="ubuntu"
   region=$(gum choose --header "Region" us-east-1 eu-west-1 eu-north-1 ap-southeast-1)
   bundle=$(gum choose --header "Bundle" small_3_0 medium_3_0 large_3_0)
-  key_name=$(gum input --header "SSH key name (in Lightsail)")
+
+  # SSH key selection from provider API (#4)
+  local available_keys
+  available_keys=$(aws lightsail get-key-pairs --region "$region" --query 'keyPairs[].name' --output text | tr '\t' '\n' || true)
+  if [[ -n "$available_keys" ]]; then
+    key_name=$(echo "$available_keys" | gum choose --header "SSH key")
+  else
+    key_name=$(gum input --header "SSH key name (none found, enter manually)")
+  fi
+
   name=$(gum input --header "Instance name" --value "coder-dev")
 
   gum style --bold "Summary"
@@ -212,7 +273,7 @@ lightsail_create() {
   setup_wireguard
   trap 'cleanup_wireguard' EXIT
   local wg_cloud_init
-  wg_cloud_init=$(build_cloud_init)
+  wg_cloud_init=$(build_cloud_init "$ssh_user")
 
   gum spin --title "Creating Lightsail instance '$name'..." -- \
     aws lightsail create-instances \
@@ -227,9 +288,16 @@ lightsail_create() {
   gum spin --title "Waiting for instance to be running..." -- \
     aws lightsail wait instance-running --instance-name "$name" --region "$region" 2>/dev/null || sleep 15
 
+  # Allocate and attach a static IP (#5)
+  local static_ip_name="${name}-ip"
+  gum spin --title "Allocating static IP..." -- \
+    aws lightsail allocate-static-ip --static-ip-name "$static_ip_name" --region "$region"
+  gum spin --title "Attaching static IP..." -- \
+    aws lightsail attach-static-ip --static-ip-name "$static_ip_name" --instance-name "$name" --region "$region"
+
   local ip
-  ip=$(aws lightsail get-instance --instance-name "$name" --region "$region" \
-       --query 'instance.publicIpAddress' --output text)
+  ip=$(aws lightsail get-static-ip --static-ip-name "$static_ip_name" --region "$region" \
+       --query 'staticIp.ipAddress' --output text)
 
   show_qr "$ip" "$ssh_user"
 }
@@ -245,7 +313,12 @@ lightsail_destroy() {
   gum confirm "Destroy Lightsail instance '$target'? This is irreversible." || exit 0
   gum spin --title "Destroying '$target'..." -- \
     aws lightsail delete-instance --instance-name "$target" --region "$region"
+
+  # Release the static IP (#5)
+  aws lightsail release-static-ip --static-ip-name "${target}-ip" --region "$region" 2>/dev/null || true
+
   gum style --foreground 2 --bold "Destroyed '$target'."
+  gum style --foreground 3 "Remember to remove the WireGuard tunnel from your phone/device."
 }
 
 lightsail_status() {
@@ -260,7 +333,16 @@ ec2_create() {
   local region itype key_name name ssh_user="ubuntu"
   region=$(gum choose --header "Region" us-east-1 us-west-2 eu-west-1 eu-north-1 ap-southeast-1)
   itype=$(gum choose --header "Instance type" t3.small t3.medium t3.large)
-  key_name=$(gum input --header "Key pair name (in EC2)")
+
+  # SSH key selection from provider API (#4)
+  local available_keys
+  available_keys=$(aws ec2 describe-key-pairs --region "$region" --query 'KeyPairs[].KeyName' --output text | tr '\t' '\n' || true)
+  if [[ -n "$available_keys" ]]; then
+    key_name=$(echo "$available_keys" | gum choose --header "SSH key")
+  else
+    key_name=$(gum input --header "Key pair name (none found, enter manually)")
+  fi
+
   name=$(gum input --header "Instance name" --value "coder-dev")
 
   gum style --bold "Summary"
@@ -271,7 +353,7 @@ ec2_create() {
   setup_wireguard
   trap 'cleanup_wireguard' EXIT
   local wg_cloud_init
-  wg_cloud_init=$(build_cloud_init)
+  wg_cloud_init=$(build_cloud_init "$ssh_user")
 
   # Look up latest Ubuntu 24.04 AMI
   local ami
@@ -315,9 +397,16 @@ ec2_create() {
   gum spin --title "Waiting for instance to be running..." -- \
     aws ec2 wait instance-running --region "$region" --instance-ids "$instance_id"
 
+  # Allocate and associate an Elastic IP (#5)
+  local alloc_id
+  alloc_id=$(gum spin --title "Allocating Elastic IP..." --show-output -- \
+    aws ec2 allocate-address --region "$region" --query 'AllocationId' --output text)
+  gum spin --title "Associating Elastic IP..." -- \
+    aws ec2 associate-address --region "$region" --instance-id "$instance_id" --allocation-id "$alloc_id"
+
   local ip
-  ip=$(aws ec2 describe-instances --region "$region" --instance-ids "$instance_id" \
-       --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+  ip=$(aws ec2 describe-addresses --region "$region" --allocation-ids "$alloc_id" \
+       --query 'Addresses[0].PublicIp' --output text)
 
   show_qr "$ip" "$ssh_user"
 }
@@ -334,9 +423,32 @@ ec2_destroy() {
   target=$(echo "$instances" | gum choose --header "Select instance to terminate")
   iid=$(echo "$target" | awk '{print $1}')
   gum confirm "Terminate EC2 instance $iid? This is irreversible." || exit 0
+
+  # Release Elastic IP before terminating (#5)
+  local eip_alloc
+  eip_alloc=$(aws ec2 describe-addresses --region "$region" \
+    --filters "Name=instance-id,Values=$iid" \
+    --query 'Addresses[0].AllocationId' --output text 2>/dev/null || echo "None")
+  if [[ "$eip_alloc" != "None" && -n "$eip_alloc" ]]; then
+    aws ec2 release-address --region "$region" --allocation-id "$eip_alloc" 2>/dev/null || true
+  fi
+
   gum spin --title "Terminating '$iid'..." -- \
     aws ec2 terminate-instances --region "$region" --instance-ids "$iid"
+
+  # Try to clean up security group (#3)
+  local sg_name="coder-deploy-$(echo "$target" | awk '{print $2}')"
+  local sg_id
+  sg_id=$(aws ec2 describe-security-groups --region "$region" \
+    --filters "Name=group-name,Values=$sg_name" \
+    --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "None")
+  if [[ "$sg_id" != "None" && -n "$sg_id" ]]; then
+    sleep 5  # Wait for instance to fully release the SG
+    aws ec2 delete-security-group --region "$region" --group-id "$sg_id" 2>/dev/null || true
+  fi
+
   gum style --foreground 2 --bold "Terminated '$iid'."
+  gum style --foreground 3 "Remember to remove the WireGuard tunnel from your phone/device."
 }
 
 ec2_status() {
@@ -352,7 +464,16 @@ do_create() {
   local region size ssh_key name ssh_user="root"
   region=$(gum choose --header "Region" nyc1 lon1 fra1 sgp1)
   size=$(gum choose --header "Size" s-1vcpu-2gb s-2vcpu-4gb s-4vcpu-8gb)
-  ssh_key=$(gum input --header "SSH key name (in DigitalOcean)")
+
+  # SSH key selection from provider API (#4)
+  local available_keys
+  available_keys=$(doctl compute ssh-key list --format Name --no-header || true)
+  if [[ -n "$available_keys" ]]; then
+    ssh_key=$(echo "$available_keys" | gum choose --header "SSH key")
+  else
+    ssh_key=$(gum input --header "SSH key name (none found, enter manually)")
+  fi
+
   name=$(gum input --header "Droplet name" --value "coder-dev")
 
   gum style --bold "Summary"
@@ -363,7 +484,7 @@ do_create() {
   setup_wireguard
   trap 'cleanup_wireguard' EXIT
   local wg_cloud_init
-  wg_cloud_init=$(build_cloud_init)
+  wg_cloud_init=$(build_cloud_init "$ssh_user")
 
   local droplet_id
   droplet_id=$(gum spin --title "Creating droplet '$name'..." --show-output -- \
@@ -372,6 +493,7 @@ do_create() {
       --ssh-keys "$ssh_key" --user-data-file "$wg_cloud_init" \
       --wait --format ID --no-header)
 
+  # DigitalOcean droplet IPs are already static (don't change on reboot)
   local ip
   ip=$(doctl compute droplet get "$droplet_id" --format PublicIPv4 --no-header)
 
@@ -388,6 +510,7 @@ do_destroy() {
   gum confirm "Destroy droplet $did? This is irreversible." || exit 0
   gum spin --title "Destroying droplet '$did'..." -- doctl compute droplet delete "$did" --force
   gum style --foreground 2 --bold "Destroyed droplet '$did'."
+  gum style --foreground 3 "Remember to remove the WireGuard tunnel from your phone/device."
 }
 
 do_status() {
@@ -400,7 +523,16 @@ hetzner_create() {
   local location stype ssh_key name ssh_user="root"
   location=$(gum choose --header "Location" nbg1 fsn1 hel1 ash)
   stype=$(gum choose --header "Server type" cx22 cx32 cx42)
-  ssh_key=$(gum input --header "SSH key name (in Hetzner)")
+
+  # SSH key selection from provider API (#4)
+  local available_keys
+  available_keys=$(hcloud ssh-key list -o noheader -o columns=name || true)
+  if [[ -n "$available_keys" ]]; then
+    ssh_key=$(echo "$available_keys" | gum choose --header "SSH key")
+  else
+    ssh_key=$(gum input --header "SSH key name (none found, enter manually)")
+  fi
+
   name=$(gum input --header "Server name" --value "coder-dev")
 
   gum style --bold "Summary"
@@ -411,7 +543,7 @@ hetzner_create() {
   setup_wireguard
   trap 'cleanup_wireguard' EXIT
   local wg_cloud_init
-  wg_cloud_init=$(build_cloud_init)
+  wg_cloud_init=$(build_cloud_init "$ssh_user")
 
   local result
   result=$(gum spin --title "Creating server '$name'..." --show-output -- \
@@ -420,6 +552,7 @@ hetzner_create() {
       --location "$location" --ssh-key "$ssh_key" \
       --user-data-from-file "$wg_cloud_init")
 
+  # Hetzner cloud server IPs are already static
   local ip
   ip=$(hcloud server ip "$name")
 
@@ -435,6 +568,7 @@ hetzner_destroy() {
   gum confirm "Destroy Hetzner server '$target'? This is irreversible." || exit 0
   gum spin --title "Destroying '$target'..." -- hcloud server delete "$target"
   gum style --foreground 2 --bold "Destroyed '$target'."
+  gum style --foreground 3 "Remember to remove the WireGuard tunnel from your phone/device."
 }
 
 hetzner_status() {

@@ -47,16 +47,6 @@ resource "coder_agent" "main" {
   startup_script = <<-EOT
     #!/bin/bash
 
-    export DEBIAN_FRONTEND=noninteractive
-
-    # --- System packages (don't persist across container recreation) ---
-    (sudo apt-get update && sudo apt-get install -y zsh tmux ttyd) </dev/null >/dev/null 2>&1
-
-    # Install Node.js (required for MCP servers)
-    if ! command -v node &> /dev/null; then
-      (curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt-get install -y nodejs) </dev/null >/dev/null 2>&1
-    fi
-
     # --- User-space tools (persist in home volume) ---
     mkdir -p ~/.local/bin
     export PATH="$HOME/.local/bin:$HOME/.fzf/bin:$PATH"
@@ -75,11 +65,6 @@ resource "coder_agent" "main" {
     # zoxide (smart cd)
     if [ ! -f ~/.local/bin/zoxide ]; then
       (curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh) </dev/null >/dev/null 2>&1
-    fi
-
-    # Claude Code
-    if ! command -v claude &> /dev/null; then
-      (sudo npm install -g @anthropic-ai/claude-code || true) </dev/null >/dev/null 2>&1
     fi
 
     # Kiro CLI
@@ -293,13 +278,21 @@ resource "coder_app" "mobile_terminal" {
   subdomain    = false
 }
 
+resource "docker_image" "workspace" {
+  name = "coder-workspace:latest"
+  build {
+    context    = path.module
+    dockerfile = "Dockerfile"
+  }
+}
+
 resource "docker_volume" "home_volume" {
   name = "coder-${data.coder_workspace.me.id}-home"
 }
 
 resource "docker_container" "workspace" {
   count = data.coder_workspace.me.start_count
-  image = "codercom/enterprise-base:ubuntu"
+  image = docker_image.workspace.name
   name  = "coder-${data.coder_workspace_owner.me.name}-${data.coder_workspace.me.name}"
 
   command = ["sh", "-c", coder_agent.main.init_script]
