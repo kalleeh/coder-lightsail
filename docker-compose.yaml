@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  coder:
+    image: ${CODER_REPO:-ghcr.io/coder/coder}:${CODER_VERSION:-latest}
+    ports:
+      - "7080:7080"
+    environment:
+      CODER_PG_CONNECTION_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database/${POSTGRES_DB}?sslmode=disable"
+      CODER_HTTP_ADDRESS: "0.0.0.0:7080"
+      CODER_ACCESS_URL: "${CODER_ACCESS_URL}"
+      # AI Bridge configuration for AWS Bedrock
+      CODER_AIBRIDGE_ENABLED: "true"
+      CODER_AIBRIDGE_PROVIDER: "bedrock"
+      CODER_AIBRIDGE_BEDROCK_REGION: "${AWS_REGION}"
+      CODER_AIBRIDGE_BEDROCK_MODEL: "${CODER_AIBRIDGE_BEDROCK_MODEL}"
+      CODER_AIBRIDGE_MODELS: "${CODER_AIBRIDGE_MODELS}"
+      # AWS credentials (use IAM role in production)
+      AWS_REGION: "${AWS_REGION}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+    group_add:
+      - "988"  # docker group
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - coder_home:/home/coder
+    depends_on:
+      database:
+        condition: service_healthy
+
+  database:
+    image: "postgres:17"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - coder_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  coder_data:
+  coder_home:

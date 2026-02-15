@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Terminal</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;background:#000;overflow:hidden}
+#term-frame{width:100%;height:calc(100% - 48px);border:none}
+#keybar{
+  height:48px;display:flex;align-items:center;
+  background:#16213e;border-top:1px solid #0f3460;
+  overflow-x:auto;-webkit-overflow-scrolling:touch;
+  padding:0 4px;gap:4px;
+}
+#keybar::-webkit-scrollbar{display:none}
+#keybar button{
+  flex:0 0 auto;height:36px;min-width:40px;padding:0 10px;
+  background:#1a1a2e;color:#e0e0e0;
+  border:1px solid #0f3460;border-radius:6px;
+  font-size:13px;font-family:-apple-system,system-ui,monospace;
+  touch-action:manipulation;-webkit-tap-highlight-color:transparent;
+  user-select:none;-webkit-user-select:none;
+}
+#keybar button:active{background:#0f3460}
+#keybar button.mod{color:#e94560}
+#keybar button.mod.active{background:#e94560;color:#fff;border-color:#e94560}
+#keybar .sep{width:1px;height:24px;background:#0f3460;flex:0 0 1px}
+</style>
+</head>
+<body>
+<iframe id="term-frame" src="/TTYD_PATH/"></iframe>
+<div id="keybar">
+  <button data-tmux="Escape">Esc</button>
+  <button data-tmux="Tab">Tab</button>
+  <div class="sep"></div>
+  <button data-tmux="Up">&#9650;</button>
+  <button data-tmux="Down">&#9660;</button>
+  <button data-tmux="Left">&#9664;</button>
+  <button data-tmux="Right">&#9654;</button>
+  <div class="sep"></div>
+  <button data-key="Control" class="mod">Ctrl</button>
+  <button data-tmux="C-c">C-c</button>
+  <button data-tmux="C-d">C-d</button>
+  <button data-tmux="C-a">C-a</button>
+  <button data-tmux="C-l">C-l</button>
+  <button data-tmux="C-z">C-z</button>
+  <div class="sep"></div>
+  <button data-tmux="Enter">Enter</button>
+  <div class="sep"></div>
+  <button data-lit="|">|</button>
+  <button data-lit="~">~</button>
+  <button data-lit="`">`</button>
+</div>
+<script>
+(function(){
+  var frame=document.getElementById('term-frame');
+  var base=location.pathname.replace(/[^/]*$/,'');
+  var ttydPath=base.replace(/apps\/mobile-terminal\/$/, 'apps/terminal/');
+  frame.src=ttydPath;
+
+  var ctrlActive=false;
+  var ctrlBtn=document.querySelector('[data-key="Control"]');
+
+  function sendTmux(key){
+    fetch(base+'send',{method:'POST',body:key}).catch(function(){});
+  }
+  function sendLiteral(ch){
+    fetch(base+'sendlit',{method:'POST',body:ch}).catch(function(){});
+  }
+
+  document.querySelectorAll('#keybar button').forEach(function(btn){
+    function handler(e){
+      e.preventDefault();e.stopPropagation();
+      if(btn.dataset.key==='Control'){
+        ctrlActive=!ctrlActive;btn.classList.toggle('active',ctrlActive);return;
+      }
+      if(btn.dataset.tmux){
+        sendTmux(btn.dataset.tmux);
+      }else if(btn.dataset.lit){
+        if(ctrlActive){
+          var code='C-'+btn.dataset.lit.toLowerCase();
+          sendTmux(code);
+          ctrlActive=false;ctrlBtn.classList.remove('active');
+        }else{
+          sendLiteral(btn.dataset.lit);
+        }
+      }
+      if(ctrlActive&&btn.dataset.tmux&&!btn.dataset.tmux.startsWith('C-')){
+        // User pressed Ctrl then a non-ctrl key, reset
+        ctrlActive=false;ctrlBtn.classList.remove('active');
+      }
+    }
+    btn.addEventListener('touchstart',handler,{passive:false});
+    btn.addEventListener('mousedown',handler);
+  });
+})();
+</script>
+</body>
+</html>
