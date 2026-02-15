@@ -108,10 +108,21 @@ ${peers_block}
 WGEOF
   )
 
-  # Insert WireGuard write_files entry before the runcmd section
+  # Insert WireGuard write_files entry before the runcmd section.
+  # Uses a temp file approach instead of awk -v (BSD awk on macOS
+  # cannot handle multi-line strings in -v assignments).
+  local wg_block_file="$WG_TMPDIR/wg-block.yaml"
+  echo "$wg_write_files" > "$wg_block_file"
   local tmp_insert="$WG_TMPDIR/cloud-init-insert.yaml"
-  awk -v wg="$wg_write_files" '/^runcmd:/ { print wg; print ""; } { print }' "$tmp_ci" > "$tmp_insert"
-  mv "$tmp_insert" "$tmp_ci"
+  local runcmd_line
+  runcmd_line=$(grep -n '^runcmd:' "$tmp_ci" | head -1 | cut -d: -f1)
+  if [[ -n "$runcmd_line" ]]; then
+    head -n "$((runcmd_line - 1))" "$tmp_ci" > "$tmp_insert"
+    cat "$wg_block_file" >> "$tmp_insert"
+    echo "" >> "$tmp_insert"
+    tail -n +"$runcmd_line" "$tmp_ci" >> "$tmp_insert"
+    mv "$tmp_insert" "$tmp_ci"
+  fi
 
   # Append WireGuard runcmd entries and firewall rules at the end
   cat >> "$tmp_ci" <<'RUNCMD'
@@ -263,6 +274,8 @@ lightsail_create() {
     key_name=$(gum input --header "SSH key name (none found, enter manually)")
   fi
 
+  [[ -z "$key_name" ]] && die "SSH key is required. Create one in Lightsail or import with: aws lightsail import-key-pair"
+
   name=$(gum input --header "Instance name" --value "coder-dev")
 
   gum style --bold "Summary"
@@ -342,6 +355,7 @@ ec2_create() {
   else
     key_name=$(gum input --header "Key pair name (none found, enter manually)")
   fi
+  [[ -z "$key_name" ]] && die "SSH key is required. Create one in EC2 or import with: aws ec2 import-key-pair"
 
   name=$(gum input --header "Instance name" --value "coder-dev")
 
@@ -473,6 +487,7 @@ do_create() {
   else
     ssh_key=$(gum input --header "SSH key name (none found, enter manually)")
   fi
+  [[ -z "$ssh_key" ]] && die "SSH key is required. Add one at https://cloud.digitalocean.com/account/security"
 
   name=$(gum input --header "Droplet name" --value "coder-dev")
 
@@ -532,6 +547,7 @@ hetzner_create() {
   else
     ssh_key=$(gum input --header "SSH key name (none found, enter manually)")
   fi
+  [[ -z "$ssh_key" ]] && die "SSH key is required. Add one at https://console.hetzner.cloud"
 
   name=$(gum input --header "Server name" --value "coder-dev")
 
