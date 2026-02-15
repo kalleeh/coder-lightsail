@@ -13,6 +13,7 @@
 
 # SSH keys
 *.pem
+standalone/dev-box-*
 
 # macOS
 .DS_Store

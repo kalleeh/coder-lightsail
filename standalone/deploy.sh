@@ -57,10 +57,9 @@ setup_wireguard() {
   ssh-keygen -t ed25519 -f "$WG_TMPDIR/ssh_key" -N "" -C "deploy-$(date +%Y%m%d)" -q
   SSH_PUBKEY=$(cat "$WG_TMPDIR/ssh_key.pub")
 
-  # Save SSH private key to ~/.ssh/ for the user
+  # Save SSH private key to the script directory
   local key_name="dev-box-$(date +%Y%m%d-%H%M%S)"
-  SSH_PRIVKEY_FILE="$HOME/.ssh/${key_name}"
-  mkdir -p "$HOME/.ssh"
+  SSH_PRIVKEY_FILE="${SCRIPT_DIR}/${key_name}"
   cp "$WG_TMPDIR/ssh_key" "$SSH_PRIVKEY_FILE"
   chmod 600 "$SSH_PRIVKEY_FILE"
 
