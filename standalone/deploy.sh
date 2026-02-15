@@ -35,10 +35,12 @@ require_cli() {
 
 styled_box() { gum style --border double --padding "1 2" --border-foreground 6 "$@"; }
 
-# ── WireGuard VPN helpers ────────────────────────────────────────────────────
+# ── WireGuard VPN + SSH key helpers ───────────────────────────────────────────
 
 WG_TMPDIR=""
 WG_PEER_COUNT=1
+SSH_PUBKEY=""
+SSH_PRIVKEY_FILE=""
 
 # Arrays for multi-peer support
 declare -a WG_PHONE_PRIVKEYS=()
@@ -50,13 +52,25 @@ setup_wireguard() {
   WG_PEER_COUNT="$peer_count"
 
   WG_TMPDIR=$(mktemp -d)
-  # Generate server key pair
+
+  # Generate SSH key pair for server access
+  ssh-keygen -t ed25519 -f "$WG_TMPDIR/ssh_key" -N "" -C "deploy-$(date +%Y%m%d)" -q
+  SSH_PUBKEY=$(cat "$WG_TMPDIR/ssh_key.pub")
+
+  # Save SSH private key to ~/.ssh/ for the user
+  local key_name="dev-box-$(date +%Y%m%d-%H%M%S)"
+  SSH_PRIVKEY_FILE="$HOME/.ssh/${key_name}"
+  mkdir -p "$HOME/.ssh"
+  cp "$WG_TMPDIR/ssh_key" "$SSH_PRIVKEY_FILE"
+  chmod 600 "$SSH_PRIVKEY_FILE"
+
+  # Generate WireGuard server key pair
   wg genkey | tee "$WG_TMPDIR/server.key" | wg pubkey > "$WG_TMPDIR/server.pub"
 
   WG_SERVER_PRIVKEY=$(cat "$WG_TMPDIR/server.key")
   WG_SERVER_PUBKEY=$(cat "$WG_TMPDIR/server.pub")
 
-  # Generate key pairs for each device/peer
+  # Generate WireGuard key pairs for each device/peer
   WG_PHONE_PRIVKEYS=()
   WG_PHONE_PUBKEYS=()
   for i in $(seq 1 "$peer_count"); do
@@ -70,6 +84,14 @@ build_cloud_init() {
   local user="${1:-ubuntu}"
   local tmp_ci="$WG_TMPDIR/cloud-init-wg.yaml"
   cp "$CLOUD_INIT" "$tmp_ci"
+
+  # Inject generated SSH public key into cloud-init
+  # Add ssh_authorized_keys for the default user (applied by cloud-init automatically)
+  {
+    echo ""
+    echo "ssh_authorized_keys:"
+    echo "  - ${SSH_PUBKEY}"
+  } >> "$tmp_ci"
 
   # Fix user paths per provider (#1)
   # DigitalOcean and Hetzner use root as default user
@@ -185,7 +207,15 @@ PHONEEOF
     echo ""
   done
 
-  styled_box "SSH over WireGuard:" "  ssh ${ssh_user}@10.100.0.1"
+  styled_box \
+    "SSH over WireGuard:" \
+    "  ssh -i ${SSH_PRIVKEY_FILE} ${ssh_user}@10.100.0.1" \
+    "" \
+    "SSH private key saved to:" \
+    "  ${SSH_PRIVKEY_FILE}" \
+    "" \
+    "To use from iOS (Termius):" \
+    "  AirDrop ${SSH_PRIVKEY_FILE} to your phone"
 
   # Cloud-init progress note (#8)
   echo ""
@@ -300,6 +330,13 @@ lightsail_create() {
 
   gum spin --title "Waiting for instance to be running..." -- \
     aws lightsail wait instance-running --instance-name "$name" --region "$region" 2>/dev/null || sleep 15
+
+  # Update Lightsail firewall: replace default rules (SSH 22) with WireGuard only
+  gum spin --title "Configuring firewall (WireGuard only)..." -- \
+    aws lightsail put-instance-public-ports \
+      --instance-name "$name" \
+      --port-infos "fromPort=51820,toPort=51820,protocol=udp" \
+      --region "$region"
 
   # Allocate and attach a static IP (#5)
   local static_ip_name="${name}-ip"
@@ -493,6 +530,9 @@ do_create() {
 
   gum style --bold "Summary"
   styled_box "Provider: DigitalOcean" "Region:   $region" "Size:     $size" "SSH key:  $ssh_key" "Name:     $name"
+  gum style --foreground 3 "Warning: DigitalOcean creates droplets with no provider-level firewall."
+  gum style --foreground 3 "All ports are open until cloud-init configures ufw (1-2 minutes)."
+  gum style --foreground 3 "Consider adding a DO cloud firewall after creation for defense-in-depth."
   gum confirm "Create this droplet?" || exit 0
 
   # Set up WireGuard keys and build modified cloud-init
@@ -553,6 +593,9 @@ hetzner_create() {
 
   gum style --bold "Summary"
   styled_box "Provider: Hetzner" "Location: $location" "Type:     $stype" "SSH key:  $ssh_key" "Name:     $name"
+  gum style --foreground 3 "Warning: Hetzner creates servers with no provider-level firewall."
+  gum style --foreground 3 "All ports are open until cloud-init configures ufw (1-2 minutes)."
+  gum style --foreground 3 "Consider adding a Hetzner firewall after creation for defense-in-depth."
   gum confirm "Create this server?" || exit 0
 
   # Set up WireGuard keys and build modified cloud-init
