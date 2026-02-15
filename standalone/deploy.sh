@@ -81,6 +81,7 @@ setup_wireguard() {
 
 build_cloud_init() {
   local user="${1:-ubuntu}"
+  local provider="${2:-}"
   local tmp_ci="$WG_TMPDIR/cloud-init-wg.yaml"
   cp "$CLOUD_INIT" "$tmp_ci"
 
@@ -165,6 +166,27 @@ RUNCMD
 
   # Cloud-init completion marker (#8)
   echo "  - touch /var/lib/cloud/.cloud-init-complete" >> "$tmp_ci"
+
+  # Lightsail doesn't support #cloud-config YAML natively.
+  # Its --user-data only accepts shell scripts. Wrap the cloud-init
+  # YAML in a script that writes it to disk and re-runs cloud-init.
+  if [[ "$provider" == "lightsail" ]]; then
+    local tmp_wrapper="$WG_TMPDIR/cloud-init-wrapper.sh"
+    {
+      echo "#!/bin/bash"
+      echo "cat > /etc/cloud/cloud.cfg.d/99-devbox.cfg << 'ENDOFCLOUDINIT'"
+      # Strip the #cloud-config header since it's now inside a shell script
+      tail -n +2 "$tmp_ci"
+      echo "ENDOFCLOUDINIT"
+      echo "cloud-init clean --logs"
+      echo "cloud-init init --local"
+      echo "cloud-init init"
+      echo "cloud-init modules --mode=config"
+      echo "cloud-init modules --mode=final"
+    } > "$tmp_wrapper"
+    echo "$tmp_wrapper"
+    return
+  fi
 
   echo "$tmp_ci"
 }
@@ -319,7 +341,7 @@ lightsail_create() {
   setup_wireguard
   trap 'cleanup_wireguard' EXIT
   local wg_cloud_init
-  wg_cloud_init=$(build_cloud_init "$ssh_user")
+  wg_cloud_init=$(build_cloud_init "$ssh_user" "lightsail")
 
   local key_flag=()
   [[ -n "$key_name" ]] && key_flag=(--key-pair-name "$key_name")
