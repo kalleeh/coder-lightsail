@@ -26,6 +26,8 @@ persistent Docker workspaces, and an optional AI coding assistant (Claude Code v
      +-------------+        +-------------------+
 ```
 
+Coder listens on port 7080 bound to localhost only. All external traffic goes through Caddy's HTTPS reverse proxy.
+
 The included **agent-shell** template provisions Docker-based workspaces with:
 
 - **Browser terminal** -- ttyd + tmux session accessible from any browser
@@ -47,7 +49,7 @@ The included **agent-shell** template provisions Docker-based workspaces with:
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USER/coder-lightsail.git
+git clone https://github.com/kalleeh/coder-lightsail.git
 cd coder-lightsail
 ```
 
@@ -114,6 +116,8 @@ All configuration lives in the `.env` file. See `.env.example` for annotated def
 |---|---|---|---|
 | `DOMAIN` | Yes | `coder.example.com` | Domain name pointing to this server (no protocol prefix) |
 | `CODER_ACCESS_URL` | Yes | `https://coder.example.com` | Full URL Coder uses to generate links and webhooks |
+| `DOCKER_GID` | No | `999` | Docker group GID on the host; setup.sh detects this automatically |
+| `CODER_VERSION` | No | `latest` | Coder server image tag; pin to a specific version for stability |
 | `POSTGRES_USER` | Yes | `coder` | PostgreSQL database user |
 | `POSTGRES_PASSWORD` | No | *auto-generated* | Database password; setup.sh generates one if left as the placeholder |
 | `POSTGRES_DB` | Yes | `coder` | PostgreSQL database name |
@@ -201,6 +205,43 @@ journalctl -u caddy -f
 # Re-run setup (idempotent)
 sudo bash setup.sh
 ```
+
+## Troubleshooting
+
+**Caddy shows "certificate error" or HTTPS doesn't work**
+- Verify your DNS A record points to the server's public IP: `dig your-domain.com`
+- Ensure ports 80 and 443 are open in your cloud provider's firewall (separate from UFW)
+- Check Caddy logs: `journalctl -u caddy -f`
+
+**Coder shows "502 Bad Gateway"**
+- Coder may still be starting. Wait 30-60 seconds and refresh.
+- Check Coder logs: `docker compose logs coder`
+
+**Workspace fails to start or agent is unhealthy**
+- Check the agent startup logs in the Coder dashboard
+- Verify Docker socket permissions: the DOCKER_GID in `.env` must match the host's docker group
+- Check: `getent group docker | cut -d: -f3` and compare with DOCKER_GID in `.env`
+
+**"Permission denied" accessing Docker socket**
+- Run `setup.sh` again -- it auto-detects and updates the Docker group GID
+
+**Cannot connect to workspace terminal**
+- The ttyd and mobile terminal scripts wait up to 5 minutes for dependencies to install
+- Check script logs: `coder ssh <workspace> -- cat /tmp/coder-script-*.log`
+
+## Backup and Restore
+
+### Database backup
+```bash
+docker compose exec -T database pg_dump -U coder coder | gzip > "backup-$(date +%Y%m%d-%H%M%S).sql.gz"
+```
+
+### Restore from backup
+```bash
+gunzip -c backup-YYYYMMDD-HHMMSS.sql.gz | docker compose exec -T database psql -U coder coder
+```
+
+Consider automating daily backups with a cron job and keeping the last 7 days.
 
 ## License
 

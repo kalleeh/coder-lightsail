@@ -14,7 +14,7 @@ html,body{height:100%;background:#000;overflow:hidden}
   height:48px;display:flex;align-items:center;
   background:#16213e;border-top:1px solid #0f3460;
   overflow-x:auto;-webkit-overflow-scrolling:touch;
-  padding:0 4px;gap:4px;
+  padding:0 4px;gap:4px;padding-bottom:env(safe-area-inset-bottom);
 }
 #keybar::-webkit-scrollbar{display:none}
 #keybar button{
@@ -50,10 +50,14 @@ html,body{height:100%;background:#000;overflow:hidden}
   <button data-tmux="C-z">C-z</button>
   <div class="sep"></div>
   <button data-tmux="Enter">Enter</button>
+  <button data-tmux="BSpace">Del</button>
   <div class="sep"></div>
   <button data-lit="|">|</button>
   <button data-lit="~">~</button>
   <button data-lit="`">`</button>
+  <button data-lit="/">/</button>
+  <button data-lit="-">-</button>
+  <button data-lit="_">_</button>
 </div>
 <script>
 (function(){
@@ -75,6 +79,7 @@ html,body{height:100%;background:#000;overflow:hidden}
   document.querySelectorAll('#keybar button').forEach(function(btn){
     function handler(e){
       e.preventDefault();e.stopPropagation();
+      if(navigator.vibrate)navigator.vibrate(10);
       if(btn.dataset.key==='Control'){
         ctrlActive=!ctrlActive;btn.classList.toggle('active',ctrlActive);return;
       }

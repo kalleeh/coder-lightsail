@@ -38,10 +38,10 @@ resource "coder_agent" "main" {
   env = {
     AWS_BEARER_TOKEN_BEDROCK      = data.coder_parameter.bedrock_api_key.value
     CLAUDE_CODE_USE_BEDROCK       = "1"
-    AWS_REGION                    = "eu-north-1"                                # Change to your AWS region (e.g. us-east-1, eu-west-1)
+    AWS_REGION                    = "us-east-1"                                 # Change to your AWS region
     ANTHROPIC_MODEL               = "anthropic.claude-sonnet-4-5-20250929-v1:0" # Bedrock model ID - change to your preferred model
-    CLAUDE_CODE_MAX_OUTPUT_TOKENS = "4096"
-    MAX_THINKING_TOKENS           = "1024"
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS = "16384"
+    MAX_THINKING_TOKENS           = "8192"
   }
 
   startup_script = <<-EOT
@@ -226,8 +226,8 @@ TMUX
 
     # Mobile terminal wrapper (iframe + key bar + tmux send-keys API on port 7682)
     mkdir -p ~/.local/share/mobile-terminal
-    echo 'PCFET0NUWVBFIGh0bWw+CjxodG1sPgo8aGVhZD4KPG1ldGEgY2hhcnNldD0idXRmLTgiPgo8bWV0YSBuYW1lPSJ2aWV3cG9ydCIgY29udGVudD0id2lkdGg9ZGV2aWNlLXdpZHRoLGluaXRpYWwtc2NhbGU9MSxtYXhpbXVtLXNjYWxlPTEsdXNlci1zY2FsYWJsZT1ubyI+CjxtZXRhIG5hbWU9ImFwcGxlLW1vYmlsZS13ZWItYXBwLWNhcGFibGUiIGNvbnRlbnQ9InllcyI+CjxtZXRhIG5hbWU9ImFwcGxlLW1vYmlsZS13ZWItYXBwLXN0YXR1cy1iYXItc3R5bGUiIGNvbnRlbnQ9ImJsYWNrLXRyYW5zbHVjZW50Ij4KPHRpdGxlPlRlcm1pbmFsPC90aXRsZT4KPHN0eWxlPgoqe21hcmdpbjowO3BhZGRpbmc6MDtib3gtc2l6aW5nOmJvcmRlci1ib3h9Cmh0bWwsYm9keXtoZWlnaHQ6MTAwJTtiYWNrZ3JvdW5kOiMwMDA7b3ZlcmZsb3c6aGlkZGVufQojdGVybS1mcmFtZXt3aWR0aDoxMDAlO2hlaWdodDpjYWxjKDEwMCUgLSA0OHB4KTtib3JkZXI6bm9uZX0KI2tleWJhcnsKICBoZWlnaHQ6NDhweDtkaXNwbGF5OmZsZXg7YWxpZ24taXRlbXM6Y2VudGVyOwogIGJhY2tncm91bmQ6IzE2MjEzZTtib3JkZXItdG9wOjFweCBzb2xpZCAjMGYzNDYwOwogIG92ZXJmbG93LXg6YXV0bzstd2Via2l0LW92ZXJmbG93LXNjcm9sbGluZzp0b3VjaDsKICBwYWRkaW5nOjAgNHB4O2dhcDo0cHg7Cn0KI2tleWJhcjo6LXdlYmtpdC1zY3JvbGxiYXJ7ZGlzcGxheTpub25lfQoja2V5YmFyIGJ1dHRvbnsKICBmbGV4OjAgMCBhdXRvO2hlaWdodDozNnB4O21pbi13aWR0aDo0MHB4O3BhZGRpbmc6MCAxMHB4OwogIGJhY2tncm91bmQ6IzFhMWEyZTtjb2xvcjojZTBlMGUwOwogIGJvcmRlcjoxcHggc29saWQgIzBmMzQ2MDtib3JkZXItcmFkaXVzOjZweDsKICBmb250LXNpemU6MTNweDtmb250LWZhbWlseTotYXBwbGUtc3lzdGVtLHN5c3RlbS11aSxtb25vc3BhY2U7CiAgdG91Y2gtYWN0aW9uOm1hbmlwdWxhdGlvbjstd2Via2l0LXRhcC1oaWdobGlnaHQtY29sb3I6dHJhbnNwYXJlbnQ7CiAgdXNlci1zZWxlY3Q6bm9uZTstd2Via2l0LXVzZXItc2VsZWN0Om5vbmU7Cn0KI2tleWJhciBidXR0b246YWN0aXZle2JhY2tncm91bmQ6IzBmMzQ2MH0KI2tleWJhciBidXR0b24ubW9ke2NvbG9yOiNlOTQ1NjB9CiNrZXliYXIgYnV0dG9uLm1vZC5hY3RpdmV7YmFja2dyb3VuZDojZTk0NTYwO2NvbG9yOiNmZmY7Ym9yZGVyLWNvbG9yOiNlOTQ1NjB9CiNrZXliYXIgLnNlcHt3aWR0aDoxcHg7aGVpZ2h0OjI0cHg7YmFja2dyb3VuZDojMGYzNDYwO2ZsZXg6MCAwIDFweH0KPC9zdHlsZT4KPC9oZWFkPgo8Ym9keT4KPGlmcmFtZSBpZD0idGVybS1mcmFtZSIgc3JjPSIvVFRZRF9QQVRILyI+PC9pZnJhbWU+CjxkaXYgaWQ9ImtleWJhciI+CiAgPGJ1dHRvbiBkYXRhLXRtdXg9IkVzY2FwZSI+RXNjPC9idXR0b24+CiAgPGJ1dHRvbiBkYXRhLXRtdXg9IlRhYiI+VGFiPC9idXR0b24+CiAgPGRpdiBjbGFzcz0ic2VwIj48L2Rpdj4KICA8YnV0dG9uIGRhdGEtdG11eD0iVXAiPiYjOTY1MDs8L2J1dHRvbj4KICA8YnV0dG9uIGRhdGEtdG11eD0iRG93biI+JiM5NjYwOzwvYnV0dG9uPgogIDxidXR0b24gZGF0YS10bXV4PSJMZWZ0Ij4mIzk2NjQ7PC9idXR0b24+CiAgPGJ1dHRvbiBkYXRhLXRtdXg9IlJpZ2h0Ij4mIzk2NTQ7PC9idXR0b24+CiAgPGRpdiBjbGFzcz0ic2VwIj48L2Rpdj4KICA8YnV0dG9uIGRhdGEta2V5PSJDb250cm9sIiBjbGFzcz0ibW9kIj5DdHJsPC9idXR0b24+CiAgPGJ1dHRvbiBkYXRhLXRtdXg9IkMtYyI+Qy1jPC9idXR0b24+CiAgPGJ1dHRvbiBkYXRhLXRtdXg9IkMtZCI+Qy1kPC9idXR0b24+CiAgPGJ1dHRvbiBkYXRhLXRtdXg9IkMtYSI+Qy1hPC9idXR0b24+CiAgPGJ1dHRvbiBkYXRhLXRtdXg9IkMtbCI+Qy1sPC9idXR0b24+CiAgPGJ1dHRvbiBkYXRhLXRtdXg9IkMteiI+Qy16PC9idXR0b24+CiAgPGRpdiBjbGFzcz0ic2VwIj48L2Rpdj4KICA8YnV0dG9uIGRhdGEtdG11eD0iRW50ZXIiPkVudGVyPC9idXR0b24+CiAgPGRpdiBjbGFzcz0ic2VwIj48L2Rpdj4KICA8YnV0dG9uIGRhdGEtbGl0PSJ8Ij58PC9idXR0b24+CiAgPGJ1dHRvbiBkYXRhLWxpdD0ifiI+fjwvYnV0dG9uPgogIDxidXR0b24gZGF0YS1saXQ9ImAiPmA8L2J1dHRvbj4KPC9kaXY+CjxzY3JpcHQ+CihmdW5jdGlvbigpewogIHZhciBmcmFtZT1kb2N1bWVudC5nZXRFbGVtZW50QnlJZCgndGVybS1mcmFtZScpOwogIHZhciBiYXNlPWxvY2F0aW9uLnBhdGhuYW1lLnJlcGxhY2UoL1teL10qJC8sJycpOwogIHZhciB0dHlkUGF0aD1iYXNlLnJlcGxhY2UoL2FwcHNcL21vYmlsZS10ZXJtaW5hbFwvJC8sICdhcHBzL3Rlcm1pbmFsLycpOwogIGZyYW1lLnNyYz10dHlkUGF0aDsKCiAgdmFyIGN0cmxBY3RpdmU9ZmFsc2U7CiAgdmFyIGN0cmxCdG49ZG9jdW1lbnQucXVlcnlTZWxlY3RvcignW2RhdGEta2V5PSJDb250cm9sIl0nKTsKCiAgZnVuY3Rpb24gc2VuZFRtdXgoa2V5KXsKICAgIGZldGNoKGJhc2UrJ3NlbmQnLHttZXRob2Q6J1BPU1QnLGJvZHk6a2V5fSkuY2F0Y2goZnVuY3Rpb24oKXt9KTsKICB9CiAgZnVuY3Rpb24gc2VuZExpdGVyYWwoY2gpewogICAgZmV0Y2goYmFzZSsnc2VuZGxpdCcse21ldGhvZDonUE9TVCcsYm9keTpjaH0pLmNhdGNoKGZ1bmN0aW9uKCl7fSk7CiAgfQoKICBkb2N1bWVudC5xdWVyeVNlbGVjdG9yQWxsKCcja2V5YmFyIGJ1dHRvbicpLmZvckVhY2goZnVuY3Rpb24oYnRuKXsKICAgIGZ1bmN0aW9uIGhhbmRsZXIoZSl7CiAgICAgIGUucHJldmVudERlZmF1bHQoKTtlLnN0b3BQcm9wYWdhdGlvbigpOwogICAgICBpZihidG4uZGF0YXNldC5rZXk9PT0nQ29udHJvbCcpewogICAgICAgIGN0cmxBY3RpdmU9IWN0cmxBY3RpdmU7YnRuLmNsYXNzTGlzdC50b2dnbGUoJ2FjdGl2ZScsY3RybEFjdGl2ZSk7cmV0dXJuOwogICAgICB9CiAgICAgIGlmKGJ0bi5kYXRhc2V0LnRtdXgpewogICAgICAgIHNlbmRUbXV4KGJ0bi5kYXRhc2V0LnRtdXgpOwogICAgICB9ZWxzZSBpZihidG4uZGF0YXNldC5saXQpewogICAgICAgIGlmKGN0cmxBY3RpdmUpewogICAgICAgICAgdmFyIGNvZGU9J0MtJytidG4uZGF0YXNldC5saXQudG9Mb3dlckNhc2UoKTsKICAgICAgICAgIHNlbmRUbXV4KGNvZGUpOwogICAgICAgICAgY3RybEFjdGl2ZT1mYWxzZTtjdHJsQnRuLmNsYXNzTGlzdC5yZW1vdmUoJ2FjdGl2ZScpOwogICAgICAgIH1lbHNlewogICAgICAgICAgc2VuZExpdGVyYWwoYnRuLmRhdGFzZXQubGl0KTsKICAgICAgICB9CiAgICAgIH0KICAgICAgaWYoY3RybEFjdGl2ZSYmYnRuLmRhdGFzZXQudG11eCYmIWJ0bi5kYXRhc2V0LnRtdXguc3RhcnRzV2l0aCgnQy0nKSl7CiAgICAgICAgLy8gVXNlciBwcmVzc2VkIEN0cmwgdGhlbiBhIG5vbi1jdHJsIGtleSwgcmVzZXQKICAgICAgICBjdHJsQWN0aXZlPWZhbHNlO2N0cmxCdG4uY2xhc3NMaXN0LnJlbW92ZSgnYWN0aXZlJyk7CiAgICAgIH0KICAgIH0KICAgIGJ0bi5hZGRFdmVudExpc3RlbmVyKCd0b3VjaHN0YXJ0JyxoYW5kbGVyLHtwYXNzaXZlOmZhbHNlfSk7CiAgICBidG4uYWRkRXZlbnRMaXN0ZW5lcignbW91c2Vkb3duJyxoYW5kbGVyKTsKICB9KTsKfSkoKTsKPC9zY3JpcHQ+CjwvYm9keT4KPC9odG1sPgo=' | base64 -d > ~/.local/share/mobile-terminal/index.html
-    echo 'Y29uc3QgaHR0cCA9IHJlcXVpcmUoJ2h0dHAnKTsKY29uc3QgZnMgPSByZXF1aXJlKCdmcycpOwpjb25zdCBwYXRoID0gcmVxdWlyZSgncGF0aCcpOwpjb25zdCB7IGV4ZWMgfSA9IHJlcXVpcmUoJ2NoaWxkX3Byb2Nlc3MnKTsKCmNvbnN0IEhUTUwgPSBmcy5yZWFkRmlsZVN5bmMocGF0aC5qb2luKF9fZGlybmFtZSwgJ2luZGV4Lmh0bWwnKSk7CgpodHRwLmNyZWF0ZVNlcnZlcigocmVxLCByZXMpID0+IHsKICAvLyB0bXV4IHNlbmQta2V5cyBmb3Igc3BlY2lhbCBrZXlzIChFc2NhcGUsIFRhYiwgVXAsIEMtYywgZXRjLikKICBpZiAocmVxLm1ldGhvZCA9PT0gJ1BPU1QnICYmIHJlcS51cmwgPT09ICcvc2VuZCcpIHsKICAgIGxldCBib2R5ID0gJyc7CiAgICByZXEub24oJ2RhdGEnLCBjID0+IGJvZHkgKz0gYyk7CiAgICByZXEub24oJ2VuZCcsICgpID0+IHsKICAgICAgY29uc3Qga2V5ID0gYm9keS50cmltKCk7CiAgICAgIC8vIFNhbml0aXplOiBvbmx5IGFsbG93IGtub3duIHRtdXgga2V5IG5hbWVzCiAgICAgIGlmICgvXihFc2NhcGV8VGFifFVwfERvd258TGVmdHxSaWdodHxFbnRlcnxCU3BhY2V8Qy1bYS16XXxNLVthLXpdKSQvLnRlc3Qoa2V5KSkgewogICAgICAgIGV4ZWMoJ3RtdXggc2VuZC1rZXlzIC10IG1haW4gJyArIGtleSwgKGVycikgPT4gewogICAgICAgICAgcmVzLndyaXRlSGVhZChlcnIgPyA1MDAgOiAyMDAsIHsnQ29udGVudC1UeXBlJzondGV4dC9wbGFpbid9KTsKICAgICAgICAgIHJlcy5lbmQoZXJyID8gJ2Vycm9yJyA6ICdvaycpOwogICAgICAgIH0pOwogICAgICB9IGVsc2UgewogICAgICAgIHJlcy53cml0ZUhlYWQoNDAwLCB7J0NvbnRlbnQtVHlwZSc6J3RleHQvcGxhaW4nfSk7CiAgICAgICAgcmVzLmVuZCgnaW52YWxpZCBrZXknKTsKICAgICAgfQogICAgfSk7CiAgICByZXR1cm47CiAgfQoKICAvLyB0bXV4IHNlbmQta2V5cyAtbCBmb3IgbGl0ZXJhbCBjaGFyYWN0ZXJzICh8LCB+LCBgKQogIGlmIChyZXEubWV0aG9kID09PSAnUE9TVCcgJiYgcmVxLnVybCA9PT0gJy9zZW5kbGl0JykgewogICAgbGV0IGJvZHkgPSAnJzsKICAgIHJlcS5vbignZGF0YScsIGMgPT4gYm9keSArPSBjKTsKICAgIHJlcS5vbignZW5kJywgKCkgPT4gewogICAgICBjb25zdCBjaCA9IGJvZHkudHJpbSgpOwogICAgICAvLyBTYW5pdGl6ZTogb25seSBhbGxvdyBzaW5nbGUgcHJpbnRhYmxlIGNoYXJhY3RlcnMKICAgICAgaWYgKGNoLmxlbmd0aCA9PT0gMSAmJiBjaC5jaGFyQ29kZUF0KDApID49IDMyICYmIGNoLmNoYXJDb2RlQXQoMCkgPD0gMTI2KSB7CiAgICAgICAgZXhlYygidG11eCBzZW5kLWtleXMgLXQgbWFpbiAtbCAnIiArIGNoLnJlcGxhY2UoLycvZywgIidcXCcnIikgKyAiJyIsIChlcnIpID0+IHsKICAgICAgICAgIHJlcy53cml0ZUhlYWQoZXJyID8gNTAwIDogMjAwLCB7J0NvbnRlbnQtVHlwZSc6J3RleHQvcGxhaW4nfSk7CiAgICAgICAgICByZXMuZW5kKGVyciA/ICdlcnJvcicgOiAnb2snKTsKICAgICAgICB9KTsKICAgICAgfSBlbHNlIHsKICAgICAgICByZXMud3JpdGVIZWFkKDQwMCwgeydDb250ZW50LVR5cGUnOid0ZXh0L3BsYWluJ30pOwogICAgICAgIHJlcy5lbmQoJ2ludmFsaWQgY2hhcicpOwogICAgICB9CiAgICB9KTsKICAgIHJldHVybjsKICB9CgogIC8vIFNlcnZlIGluZGV4Lmh0bWwgZm9yIGV2ZXJ5dGhpbmcgZWxzZQogIHJlcy53cml0ZUhlYWQoMjAwLCB7J0NvbnRlbnQtVHlwZSc6J3RleHQvaHRtbCd9KTsKICByZXMuZW5kKEhUTUwpOwp9KS5saXN0ZW4oNzY4MiwgKCkgPT4gewogIGNvbnNvbGUubG9nKCdNb2JpbGUgdGVybWluYWwgc2VydmVyIG9uIHBvcnQgNzY4MicpOwp9KTsK' | base64 -d > ~/.local/share/mobile-terminal/serve-mobile.js
+    echo '${base64encode(file("${path.module}/mobile-terminal.html"))}' | base64 -d > ~/.local/share/mobile-terminal/index.html
+    echo '${base64encode(file("${path.module}/serve-mobile.js"))}' | base64 -d > ~/.local/share/mobile-terminal/serve-mobile.js
   EOT
 }
 
@@ -239,8 +239,15 @@ resource "coder_script" "ttyd" {
   run_on_start = true
   script       = <<-EOT
     # Wait for ttyd to be installed by startup script
-    while ! command -v ttyd &>/dev/null; do sleep 2; done
-    while ! command -v tmux &>/dev/null; do sleep 2; done
+    WAITED=0
+    while ! command -v ttyd &>/dev/null; do
+      sleep 2; WAITED=$((WAITED+2))
+      [ $WAITED -ge 300 ] && echo "ERROR: ttyd not found after 300s" && exit 1
+    done
+    while ! command -v tmux &>/dev/null; do
+      sleep 2; WAITED=$((WAITED+2))
+      [ $WAITED -ge 300 ] && echo "ERROR: tmux not found after 300s" && exit 1
+    done
     exec ttyd --writable -p 7681 tmux new -A -s main
   EOT
 }
@@ -253,8 +260,15 @@ resource "coder_script" "mobile_terminal" {
   run_on_start = true
   script       = <<-EOT
     # Wait for node and the HTML/JS files to be ready
-    while ! command -v node &>/dev/null; do sleep 2; done
-    while [ ! -f ~/.local/share/mobile-terminal/serve-mobile.js ]; do sleep 2; done
+    WAITED=0
+    while ! command -v node &>/dev/null; do
+      sleep 2; WAITED=$((WAITED+2))
+      [ $WAITED -ge 300 ] && echo "ERROR: node not found after 300s" && exit 1
+    done
+    while [ ! -f ~/.local/share/mobile-terminal/serve-mobile.js ]; do
+      sleep 2; WAITED=$((WAITED+2))
+      [ $WAITED -ge 300 ] && echo "ERROR: mobile terminal files not found after 300s" && exit 1
+    done
     cd ~/.local/share/mobile-terminal && exec node serve-mobile.js
   EOT
 }

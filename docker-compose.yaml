@@ -1,10 +1,9 @@
-version: '3.8'
-
 services:
   coder:
     image: ${CODER_REPO:-ghcr.io/coder/coder}:${CODER_VERSION:-latest}
+    restart: unless-stopped
     ports:
-      - "7080:7080"
+      - "127.0.0.1:7080:7080"
     environment:
       CODER_PG_CONNECTION_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@database/${POSTGRES_DB}?sslmode=disable"
       CODER_HTTP_ADDRESS: "0.0.0.0:7080"
@@ -20,22 +19,39 @@ services:
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
     group_add:
-      - "988"  # docker group
+      - "${DOCKER_GID}"  # docker group
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - coder_home:/home/coder
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7080/api/v2/buildinfo"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     depends_on:
       database:
         condition: service_healthy
 
   database:
     image: "postgres:17"
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - coder_data:/var/lib/postgresql/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s

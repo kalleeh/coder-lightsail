@@ -59,6 +59,15 @@ if [[ "${ID:-}" != "ubuntu" ]]; then
 fi
 success "Detected Ubuntu ${VERSION_ID:-unknown}"
 
+# -- Check disk space --
+AVAILABLE_MB=$(df -m / | awk 'NR==2 {print $4}')
+if [[ "$AVAILABLE_MB" -lt 2048 ]]; then
+    error "Less than 2GB disk space available (${AVAILABLE_MB}MB free)."
+    error "Docker and Coder need at least 2GB free."
+    exit 1
+fi
+success "Disk space available: ${AVAILABLE_MB}MB"
+
 # -- .env must exist ---------------------------------------------------------
 ENV_FILE="${SCRIPT_DIR}/.env"
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -79,6 +88,7 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+chmod 600 "$ENV_FILE"
 
 # -- Validate required variables ---------------------------------------------
 REQUIRED_VARS=(DOMAIN CODER_ACCESS_URL POSTGRES_USER POSTGRES_DB)
@@ -89,6 +99,13 @@ for var in "${REQUIRED_VARS[@]}"; do
     fi
 done
 success "All required .env variables are set (DOMAIN=${DOMAIN})"
+
+# -- Validate domain is not a placeholder --
+if [[ "$DOMAIN" == "coder.example.com" ]]; then
+    error "DOMAIN is still set to the example value 'coder.example.com'"
+    error "Edit .env and set your real domain before running setup."
+    exit 1
+fi
 
 
 # ===================== GENERATE SECURE DB CREDENTIALS =======================
@@ -157,6 +174,21 @@ if ! docker compose version &>/dev/null; then
 fi
 success "Docker Compose plugin available ($(docker compose version --short))"
 
+# -- Detect and persist Docker GID --
+DOCKER_GID=$(getent group docker | cut -d: -f3)
+if [[ -n "$DOCKER_GID" ]]; then
+    if grep -q '^DOCKER_GID=' "$ENV_FILE"; then
+        sed -i "s|^DOCKER_GID=.*|DOCKER_GID=${DOCKER_GID}|" "$ENV_FILE"
+    else
+        echo "DOCKER_GID=${DOCKER_GID}" >> "$ENV_FILE"
+    fi
+    export DOCKER_GID
+    success "Docker group GID detected: ${DOCKER_GID}"
+else
+    warn "Could not detect Docker group GID. Using default 999."
+    export DOCKER_GID=999
+fi
+
 
 # ============================ INSTALL CADDY =================================
 header "Caddy"
@@ -199,19 +231,12 @@ if [[ ! -f "$CADDYFILE_SRC" ]]; then
     exit 1
 fi
 
-# The repository Caddyfile has a hardcoded domain. We generate the actual
-# Caddyfile by substituting the DOMAIN from .env.
-info "Writing Caddyfile for domain: ${DOMAIN}"
-cat > "$CADDYFILE_DEST" <<EOF
-${DOMAIN} {
-    reverse_proxy localhost:7080
-}
-EOF
-success "Caddyfile written to ${CADDYFILE_DEST}"
+info "Deploying Caddyfile for domain: ${DOMAIN}"
+cp "$CADDYFILE_SRC" "$CADDYFILE_DEST"
+success "Caddyfile deployed to ${CADDYFILE_DEST}"
 
-# Caddy runs as a systemd service. We also set DOMAIN in its environment
-# override so that {$DOMAIN} env var syntax works if the Caddyfile is changed
-# to use it in the future.
+# Caddy runs as a systemd service. We set DOMAIN in its environment
+# override so that Caddy's {$DOMAIN} env var syntax resolves correctly.
 mkdir -p /etc/systemd/system/caddy.service.d
 cat > /etc/systemd/system/caddy.service.d/override.conf <<EOF
 [Service]
