@@ -294,21 +294,19 @@ lightsail_create() {
   region=$(gum choose --header "Region" us-east-1 eu-west-1 eu-north-1 ap-southeast-1)
   bundle=$(gum choose --header "Bundle" small_3_0 medium_3_0 large_3_0)
 
-  # SSH key selection from provider API (#4)
-  local available_keys
+  # SSH key selection from provider API (optional -- we generate our own via cloud-init)
+  local available_keys key_name=""
   available_keys=$(aws lightsail get-key-pairs --region "$region" --query 'keyPairs[].name' --output text | tr '\t' '\n' || true)
   if [[ -n "$available_keys" ]]; then
-    key_name=$(echo "$available_keys" | gum choose --header "SSH key")
-  else
-    key_name=$(gum input --header "SSH key name (none found, enter manually)")
+    key_name=$(echo "$available_keys" "$(gum style --faint '(skip - use generated key only)')" | gum choose --header "SSH key (optional)")
+    [[ "$key_name" == *"skip"* ]] && key_name=""
   fi
-
-  [[ -z "$key_name" ]] && die "SSH key is required. Create one in Lightsail or import with: aws lightsail import-key-pair"
 
   name=$(gum input --header "Instance name" --value "coder-dev")
 
+  local key_display="${key_name:-generated (via cloud-init)}"
   gum style --bold "Summary"
-  styled_box "Provider: AWS Lightsail" "Region:   $region" "Bundle:   $bundle" "SSH key:  $key_name" "Name:     $name"
+  styled_box "Provider: AWS Lightsail" "Region:   $region" "Bundle:   $bundle" "SSH key:  $key_display" "Name:     $name"
   gum confirm "Create this instance?" || exit 0
 
   # Set up WireGuard keys and build modified cloud-init
@@ -317,13 +315,16 @@ lightsail_create() {
   local wg_cloud_init
   wg_cloud_init=$(build_cloud_init "$ssh_user")
 
+  local key_flag=()
+  [[ -n "$key_name" ]] && key_flag=(--key-pair-name "$key_name")
+
   gum spin --title "Creating Lightsail instance '$name'..." -- \
     aws lightsail create-instances \
       --instance-names "$name" \
       --availability-zone "${region}a" \
       --blueprint-id ubuntu_24_04 \
       --bundle-id "$bundle" \
-      --key-pair-name "$key_name" \
+      "${key_flag[@]}" \
       --user-data "$(cat "$wg_cloud_init")" \
       --region "$region"
 
@@ -383,20 +384,19 @@ ec2_create() {
   region=$(gum choose --header "Region" us-east-1 us-west-2 eu-west-1 eu-north-1 ap-southeast-1)
   itype=$(gum choose --header "Instance type" t3.small t3.medium t3.large)
 
-  # SSH key selection from provider API (#4)
-  local available_keys
+  # SSH key selection from provider API (optional -- we generate our own via cloud-init)
+  local available_keys key_name=""
   available_keys=$(aws ec2 describe-key-pairs --region "$region" --query 'KeyPairs[].KeyName' --output text | tr '\t' '\n' || true)
   if [[ -n "$available_keys" ]]; then
-    key_name=$(echo "$available_keys" | gum choose --header "SSH key")
-  else
-    key_name=$(gum input --header "Key pair name (none found, enter manually)")
+    key_name=$(echo "$available_keys" "$(gum style --faint '(skip - use generated key only)')" | gum choose --header "SSH key (optional)")
+    [[ "$key_name" == *"skip"* ]] && key_name=""
   fi
-  [[ -z "$key_name" ]] && die "SSH key is required. Create one in EC2 or import with: aws ec2 import-key-pair"
 
   name=$(gum input --header "Instance name" --value "coder-dev")
 
+  local key_display="${key_name:-generated (via cloud-init)}"
   gum style --bold "Summary"
-  styled_box "Provider: AWS EC2" "Region:   $region" "Type:     $itype" "Key pair: $key_name" "Name:     $name"
+  styled_box "Provider: AWS EC2" "Region:   $region" "Type:     $itype" "Key pair: $key_display" "Name:     $name"
   gum confirm "Create this instance?" || exit 0
 
   # Set up WireGuard keys and build modified cloud-init
@@ -435,11 +435,14 @@ ec2_create() {
   fi
 
   # Launch instance
+  local key_flag=()
+  [[ -n "$key_name" ]] && key_flag=(--key-name "$key_name")
+
   local instance_id
   instance_id=$(gum spin --title "Launching EC2 instance..." --show-output -- \
     aws ec2 run-instances --region "$region" \
       --image-id "$ami" --instance-type "$itype" \
-      --key-name "$key_name" --security-group-ids "$sg_id" \
+      "${key_flag[@]}" --security-group-ids "$sg_id" \
       --user-data "file://${wg_cloud_init}" \
       --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$name}]" \
       --query 'Instances[0].InstanceId' --output text)
@@ -515,20 +518,19 @@ do_create() {
   region=$(gum choose --header "Region" nyc1 lon1 fra1 sgp1)
   size=$(gum choose --header "Size" s-1vcpu-2gb s-2vcpu-4gb s-4vcpu-8gb)
 
-  # SSH key selection from provider API (#4)
-  local available_keys
+  # SSH key selection from provider API (optional -- we generate our own via cloud-init)
+  local available_keys ssh_key=""
   available_keys=$(doctl compute ssh-key list --format Name --no-header || true)
   if [[ -n "$available_keys" ]]; then
-    ssh_key=$(echo "$available_keys" | gum choose --header "SSH key")
-  else
-    ssh_key=$(gum input --header "SSH key name (none found, enter manually)")
+    ssh_key=$(echo "$available_keys" "$(gum style --faint '(skip - use generated key only)')" | gum choose --header "SSH key (optional)")
+    [[ "$ssh_key" == *"skip"* ]] && ssh_key=""
   fi
-  [[ -z "$ssh_key" ]] && die "SSH key is required. Add one at https://cloud.digitalocean.com/account/security"
 
   name=$(gum input --header "Droplet name" --value "coder-dev")
 
+  local key_display="${ssh_key:-generated (via cloud-init)}"
   gum style --bold "Summary"
-  styled_box "Provider: DigitalOcean" "Region:   $region" "Size:     $size" "SSH key:  $ssh_key" "Name:     $name"
+  styled_box "Provider: DigitalOcean" "Region:   $region" "Size:     $size" "SSH key:  $key_display" "Name:     $name"
   gum style --foreground 3 "Warning: DigitalOcean creates droplets with no provider-level firewall."
   gum style --foreground 3 "All ports are open until cloud-init configures ufw (1-2 minutes)."
   gum style --foreground 3 "Consider adding a DO cloud firewall after creation for defense-in-depth."
@@ -541,10 +543,13 @@ do_create() {
   wg_cloud_init=$(build_cloud_init "$ssh_user")
 
   local droplet_id
+  local key_flag=()
+  [[ -n "$ssh_key" ]] && key_flag=(--ssh-keys "$ssh_key")
+
   droplet_id=$(gum spin --title "Creating droplet '$name'..." --show-output -- \
     doctl compute droplet create "$name" \
       --region "$region" --size "$size" --image ubuntu-24-04-x64 \
-      --ssh-keys "$ssh_key" --user-data-file "$wg_cloud_init" \
+      "${key_flag[@]}" --user-data-file "$wg_cloud_init" \
       --wait --format ID --no-header)
 
   # DigitalOcean droplet IPs are already static (don't change on reboot)
@@ -578,20 +583,19 @@ hetzner_create() {
   location=$(gum choose --header "Location" nbg1 fsn1 hel1 ash)
   stype=$(gum choose --header "Server type" cx22 cx32 cx42)
 
-  # SSH key selection from provider API (#4)
-  local available_keys
+  # SSH key selection from provider API (optional -- we generate our own via cloud-init)
+  local available_keys ssh_key=""
   available_keys=$(hcloud ssh-key list -o noheader -o columns=name || true)
   if [[ -n "$available_keys" ]]; then
-    ssh_key=$(echo "$available_keys" | gum choose --header "SSH key")
-  else
-    ssh_key=$(gum input --header "SSH key name (none found, enter manually)")
+    ssh_key=$(echo "$available_keys" "$(gum style --faint '(skip - use generated key only)')" | gum choose --header "SSH key (optional)")
+    [[ "$ssh_key" == *"skip"* ]] && ssh_key=""
   fi
-  [[ -z "$ssh_key" ]] && die "SSH key is required. Add one at https://console.hetzner.cloud"
 
   name=$(gum input --header "Server name" --value "coder-dev")
 
+  local key_display="${ssh_key:-generated (via cloud-init)}"
   gum style --bold "Summary"
-  styled_box "Provider: Hetzner" "Location: $location" "Type:     $stype" "SSH key:  $ssh_key" "Name:     $name"
+  styled_box "Provider: Hetzner" "Location: $location" "Type:     $stype" "SSH key:  $key_display" "Name:     $name"
   gum style --foreground 3 "Warning: Hetzner creates servers with no provider-level firewall."
   gum style --foreground 3 "All ports are open until cloud-init configures ufw (1-2 minutes)."
   gum style --foreground 3 "Consider adding a Hetzner firewall after creation for defense-in-depth."
@@ -603,11 +607,14 @@ hetzner_create() {
   local wg_cloud_init
   wg_cloud_init=$(build_cloud_init "$ssh_user")
 
+  local key_flag=()
+  [[ -n "$ssh_key" ]] && key_flag=(--ssh-key "$ssh_key")
+
   local result
   result=$(gum spin --title "Creating server '$name'..." --show-output -- \
     hcloud server create --name "$name" \
       --type "$stype" --image ubuntu-24.04 \
-      --location "$location" --ssh-key "$ssh_key" \
+      --location "$location" "${key_flag[@]}" \
       --user-data-from-file "$wg_cloud_init")
 
   # Hetzner cloud server IPs are already static
