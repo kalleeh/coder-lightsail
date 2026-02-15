@@ -84,13 +84,19 @@ build_cloud_init() {
   local tmp_ci="$WG_TMPDIR/cloud-init-wg.yaml"
   cp "$CLOUD_INIT" "$tmp_ci"
 
-  # Inject generated SSH public key into cloud-init
-  # Add ssh_authorized_keys for the default user (applied by cloud-init automatically)
+  # Inject generated SSH public key into cloud-init as a top-level directive.
+  # Must be inserted near the top (after #cloud-config), not appended at the end,
+  # because appending would place it inside or after the runcmd block.
+  local tmp_key="$WG_TMPDIR/cloud-init-key.yaml"
   {
+    head -1 "$tmp_ci"  # #cloud-config line
     echo ""
     echo "ssh_authorized_keys:"
     echo "  - ${SSH_PUBKEY}"
-  } >> "$tmp_ci"
+    echo ""
+    tail -n +2 "$tmp_ci"  # rest of the file
+  } > "$tmp_key"
+  mv "$tmp_key" "$tmp_ci"
 
   # Fix user paths per provider (#1)
   # DigitalOcean and Hetzner use root as default user
