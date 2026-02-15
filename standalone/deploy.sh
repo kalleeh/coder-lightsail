@@ -23,15 +23,118 @@ require_cli() {
   command -v "$cmd" &>/dev/null && return
   gum style --foreground 1 --bold "$name CLI ('$cmd') is not installed."
   case "$cmd" in
-    limactl) gum style "  brew install lima" ;;
-    aws)     gum style "  brew install awscli   # or pip install awscli" ;;
-    doctl)   gum style "  brew install doctl" ;;
-    hcloud)  gum style "  brew install hcloud" ;;
+    limactl)   gum style "  brew install lima" ;;
+    aws)       gum style "  brew install awscli   # or pip install awscli" ;;
+    doctl)     gum style "  brew install doctl" ;;
+    hcloud)    gum style "  brew install hcloud" ;;
+    wg)        gum style "  brew install wireguard-tools" ;;
+    qrencode)  gum style "  brew install qrencode" ;;
   esac
   exit 1
 }
 
 styled_box() { gum style --border double --padding "1 2" --border-foreground 6 "$@"; }
+
+# ── WireGuard VPN helpers ────────────────────────────────────────────────────
+
+WG_TMPDIR=""
+
+setup_wireguard() {
+  WG_TMPDIR=$(mktemp -d)
+  # Generate server key pair
+  wg genkey | tee "$WG_TMPDIR/server.key" | wg pubkey > "$WG_TMPDIR/server.pub"
+  # Generate phone key pair
+  wg genkey | tee "$WG_TMPDIR/phone.key" | wg pubkey > "$WG_TMPDIR/phone.pub"
+
+  WG_SERVER_PRIVKEY=$(cat "$WG_TMPDIR/server.key")
+  WG_SERVER_PUBKEY=$(cat "$WG_TMPDIR/server.pub")
+  WG_PHONE_PRIVKEY=$(cat "$WG_TMPDIR/phone.key")
+  WG_PHONE_PUBKEY=$(cat "$WG_TMPDIR/phone.pub")
+}
+
+build_cloud_init() {
+  local modified="$WG_TMPDIR/cloud-init-wg.yaml"
+  cp "$CLOUD_INIT" "$modified"
+
+  # Append WireGuard server config to write_files section.
+  # We insert it just before the "runcmd:" line so it lands inside write_files.
+  local wg_write_files
+  wg_write_files=$(cat <<WGEOF
+
+  # -- WireGuard server config --
+  - path: /etc/wireguard/wg0.conf
+    owner: root:root
+    permissions: "0600"
+    content: |
+      [Interface]
+      PrivateKey = ${WG_SERVER_PRIVKEY}
+      Address = 10.100.0.1/24
+      ListenPort = 51820
+
+      [Peer]
+      PublicKey = ${WG_PHONE_PUBKEY}
+      AllowedIPs = 10.100.0.2/32
+WGEOF
+  )
+
+  # Insert WireGuard write_files entry before the runcmd section
+  local tmp_insert="$WG_TMPDIR/cloud-init-insert.yaml"
+  awk -v wg="$wg_write_files" '/^runcmd:/ { print wg; print ""; } { print }' "$modified" > "$tmp_insert"
+  mv "$tmp_insert" "$modified"
+
+  # Append WireGuard runcmd entries and firewall rules at the end
+  cat >> "$modified" <<'RUNCMD'
+
+  # -- WireGuard VPN --
+  - apt-get install -y wireguard
+  - systemctl enable --now wg-quick@wg0
+  - ufw default deny incoming
+  - ufw allow 51820/udp
+  - ufw allow from 10.100.0.0/24 to any port 22
+  - ufw --force enable
+RUNCMD
+
+  echo "$modified"
+}
+
+show_qr() {
+  local server_ip="$1" ssh_user="$2"
+
+  local phone_conf
+  phone_conf=$(cat <<PHONEEOF
+[Interface]
+PrivateKey = ${WG_PHONE_PRIVKEY}
+Address = 10.100.0.2/24
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = ${WG_SERVER_PUBKEY}
+Endpoint = ${server_ip}:51820
+AllowedIPs = 10.100.0.1/32
+PersistentKeepalive = 25
+PHONEEOF
+  )
+
+  gum style --bold --foreground 2 "WireGuard VPN configured!"
+  echo ""
+  gum style --bold "1. Scan this QR code with the WireGuard iOS app"
+  gum style --bold "2. Enable the tunnel"
+  gum style --bold "3. Connect:  ssh ${ssh_user}@10.100.0.1"
+  echo ""
+
+  echo "$phone_conf" | qrencode -t ansiutf8
+  echo ""
+
+  gum style --foreground 3 "Phone config (in case QR doesn't scan):"
+  echo "$phone_conf"
+  echo ""
+
+  styled_box "SSH over WireGuard:" "  ssh ${ssh_user}@10.100.0.1"
+}
+
+cleanup_wireguard() {
+  [[ -n "$WG_TMPDIR" && -d "$WG_TMPDIR" ]] && rm -rf "$WG_TMPDIR"
+}
 
 # ── Provider: Lima (local) ───────────────────────────────────────────────────
 
@@ -95,7 +198,7 @@ lima_status() {
 # ── Provider: AWS Lightsail ──────────────────────────────────────────────────
 
 lightsail_create() {
-  local region bundle key_name name
+  local region bundle key_name name ssh_user="ubuntu"
   region=$(gum choose --header "Region" us-east-1 eu-west-1 eu-north-1 ap-southeast-1)
   bundle=$(gum choose --header "Bundle" small_3_0 medium_3_0 large_3_0)
   key_name=$(gum input --header "SSH key name (in Lightsail)")
@@ -105,6 +208,12 @@ lightsail_create() {
   styled_box "Provider: AWS Lightsail" "Region:   $region" "Bundle:   $bundle" "SSH key:  $key_name" "Name:     $name"
   gum confirm "Create this instance?" || exit 0
 
+  # Set up WireGuard keys and build modified cloud-init
+  setup_wireguard
+  trap 'cleanup_wireguard' EXIT
+  local wg_cloud_init
+  wg_cloud_init=$(build_cloud_init)
+
   gum spin --title "Creating Lightsail instance '$name'..." -- \
     aws lightsail create-instances \
       --instance-names "$name" \
@@ -112,7 +221,7 @@ lightsail_create() {
       --blueprint-id ubuntu_24_04 \
       --bundle-id "$bundle" \
       --key-pair-name "$key_name" \
-      --user-data "$(cat "$CLOUD_INIT")" \
+      --user-data "$(cat "$wg_cloud_init")" \
       --region "$region"
 
   gum spin --title "Waiting for instance to be running..." -- \
@@ -122,7 +231,7 @@ lightsail_create() {
   ip=$(aws lightsail get-instance --instance-name "$name" --region "$region" \
        --query 'instance.publicIpAddress' --output text)
 
-  styled_box "Lightsail instance '$name' is running!" "" "IP:   $ip" "SSH:  ssh ubuntu@$ip"
+  show_qr "$ip" "$ssh_user"
 }
 
 lightsail_destroy() {
@@ -148,7 +257,7 @@ lightsail_status() {
 # ── Provider: AWS EC2 ────────────────────────────────────────────────────────
 
 ec2_create() {
-  local region itype key_name name
+  local region itype key_name name ssh_user="ubuntu"
   region=$(gum choose --header "Region" us-east-1 us-west-2 eu-west-1 eu-north-1 ap-southeast-1)
   itype=$(gum choose --header "Instance type" t3.small t3.medium t3.large)
   key_name=$(gum input --header "Key pair name (in EC2)")
@@ -157,6 +266,12 @@ ec2_create() {
   gum style --bold "Summary"
   styled_box "Provider: AWS EC2" "Region:   $region" "Type:     $itype" "Key pair: $key_name" "Name:     $name"
   gum confirm "Create this instance?" || exit 0
+
+  # Set up WireGuard keys and build modified cloud-init
+  setup_wireguard
+  trap 'cleanup_wireguard' EXIT
+  local wg_cloud_init
+  wg_cloud_init=$(build_cloud_init)
 
   # Look up latest Ubuntu 24.04 AMI
   local ami
@@ -168,7 +283,7 @@ ec2_create() {
       --query 'sort_by(Images,&CreationDate)[-1].ImageId' --output text)
   [[ -z "$ami" || "$ami" == "None" ]] && die "Could not find Ubuntu 24.04 AMI in $region."
 
-  # Create security group
+  # Create security group (WireGuard UDP only - no SSH from public internet)
   local sg_name="coder-deploy-${name}" sg_id vpc_id
   vpc_id=$(aws ec2 describe-vpcs --region "$region" \
     --filters "Name=isDefault,Values=true" \
@@ -181,10 +296,10 @@ ec2_create() {
   if [[ "$sg_id" == "None" || -z "$sg_id" ]]; then
     sg_id=$(gum spin --title "Creating security group..." --show-output -- \
       aws ec2 create-security-group --region "$region" \
-        --group-name "$sg_name" --description "SSH access for $name" \
+        --group-name "$sg_name" --description "WireGuard access for $name" \
         --vpc-id "$vpc_id" --query 'GroupId' --output text)
     aws ec2 authorize-security-group-ingress --region "$region" \
-      --group-id "$sg_id" --protocol tcp --port 22 --cidr 0.0.0.0/0 >/dev/null
+      --group-id "$sg_id" --protocol udp --port 51820 --cidr 0.0.0.0/0 >/dev/null
   fi
 
   # Launch instance
@@ -193,7 +308,7 @@ ec2_create() {
     aws ec2 run-instances --region "$region" \
       --image-id "$ami" --instance-type "$itype" \
       --key-name "$key_name" --security-group-ids "$sg_id" \
-      --user-data "file://${CLOUD_INIT}" \
+      --user-data "file://${wg_cloud_init}" \
       --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$name}]" \
       --query 'Instances[0].InstanceId' --output text)
 
@@ -204,7 +319,7 @@ ec2_create() {
   ip=$(aws ec2 describe-instances --region "$region" --instance-ids "$instance_id" \
        --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
 
-  styled_box "EC2 instance '$name' is running!" "" "ID:   $instance_id" "IP:   $ip" "SSH:  ssh ubuntu@$ip"
+  show_qr "$ip" "$ssh_user"
 }
 
 ec2_destroy() {
@@ -234,7 +349,7 @@ ec2_status() {
 # ── Provider: DigitalOcean ───────────────────────────────────────────────────
 
 do_create() {
-  local region size ssh_key name
+  local region size ssh_key name ssh_user="root"
   region=$(gum choose --header "Region" nyc1 lon1 fra1 sgp1)
   size=$(gum choose --header "Size" s-1vcpu-2gb s-2vcpu-4gb s-4vcpu-8gb)
   ssh_key=$(gum input --header "SSH key name (in DigitalOcean)")
@@ -244,17 +359,23 @@ do_create() {
   styled_box "Provider: DigitalOcean" "Region:   $region" "Size:     $size" "SSH key:  $ssh_key" "Name:     $name"
   gum confirm "Create this droplet?" || exit 0
 
+  # Set up WireGuard keys and build modified cloud-init
+  setup_wireguard
+  trap 'cleanup_wireguard' EXIT
+  local wg_cloud_init
+  wg_cloud_init=$(build_cloud_init)
+
   local droplet_id
   droplet_id=$(gum spin --title "Creating droplet '$name'..." --show-output -- \
     doctl compute droplet create "$name" \
       --region "$region" --size "$size" --image ubuntu-24-04-x64 \
-      --ssh-keys "$ssh_key" --user-data-file "$CLOUD_INIT" \
+      --ssh-keys "$ssh_key" --user-data-file "$wg_cloud_init" \
       --wait --format ID --no-header)
 
   local ip
   ip=$(doctl compute droplet get "$droplet_id" --format PublicIPv4 --no-header)
 
-  styled_box "Droplet '$name' is running!" "" "ID:   $droplet_id" "IP:   $ip" "SSH:  ssh root@$ip"
+  show_qr "$ip" "$ssh_user"
 }
 
 do_destroy() {
@@ -276,7 +397,7 @@ do_status() {
 # ── Provider: Hetzner ────────────────────────────────────────────────────────
 
 hetzner_create() {
-  local location stype ssh_key name
+  local location stype ssh_key name ssh_user="root"
   location=$(gum choose --header "Location" nbg1 fsn1 hel1 ash)
   stype=$(gum choose --header "Server type" cx22 cx32 cx42)
   ssh_key=$(gum input --header "SSH key name (in Hetzner)")
@@ -286,17 +407,23 @@ hetzner_create() {
   styled_box "Provider: Hetzner" "Location: $location" "Type:     $stype" "SSH key:  $ssh_key" "Name:     $name"
   gum confirm "Create this server?" || exit 0
 
+  # Set up WireGuard keys and build modified cloud-init
+  setup_wireguard
+  trap 'cleanup_wireguard' EXIT
+  local wg_cloud_init
+  wg_cloud_init=$(build_cloud_init)
+
   local result
   result=$(gum spin --title "Creating server '$name'..." --show-output -- \
     hcloud server create --name "$name" \
       --type "$stype" --image ubuntu-24.04 \
       --location "$location" --ssh-key "$ssh_key" \
-      --user-data-from-file "$CLOUD_INIT")
+      --user-data-from-file "$wg_cloud_init")
 
   local ip
   ip=$(hcloud server ip "$name")
 
-  styled_box "Hetzner server '$name' is running!" "" "IP:   $ip" "SSH:  ssh root@$ip"
+  show_qr "$ip" "$ssh_user"
 }
 
 hetzner_destroy() {
@@ -324,6 +451,12 @@ choose_provider() {
 cmd_create() {
   local provider
   provider=$(choose_provider)
+
+  # WireGuard tools required for all cloud providers (not Lima)
+  if [[ "$provider" != "Lima (local)" ]]; then
+    require_cli wg "WireGuard tools"
+    require_cli qrencode qrencode
+  fi
 
   case "$provider" in
     "Lima (local)")   require_cli limactl Lima;        lima_create ;;
