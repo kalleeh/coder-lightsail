@@ -239,7 +239,7 @@ lima_create() {
   local cpus memory name
   cpus=$(gum choose --header "CPUs" 1 2 4)
   memory=$(gum choose --header "Memory" "2GiB" "4GiB" "8GiB")
-  name=$(gum input --header "Instance name" --value "coder-dev")
+  name=$(gum input --header "Instance name" --value "dev-box")
 
   gum style --bold "Summary"
   styled_box "Provider: Lima (local)" "CPUs:     $cpus" "Memory:   $memory" "Name:     $name"
@@ -308,7 +308,7 @@ lightsail_create() {
     [[ "$key_name" == *"skip"* ]] && key_name=""
   fi
 
-  name=$(gum input --header "Instance name" --value "coder-dev")
+  name=$(gum input --header "Instance name" --value "dev-box")
 
   local key_display="${key_name:-generated (via cloud-init)}"
   gum style --bold "Summary"
@@ -398,7 +398,7 @@ ec2_create() {
     [[ "$key_name" == *"skip"* ]] && key_name=""
   fi
 
-  name=$(gum input --header "Instance name" --value "coder-dev")
+  name=$(gum input --header "Instance name" --value "dev-box")
 
   local key_display="${key_name:-generated (via cloud-init)}"
   gum style --bold "Summary"
@@ -532,7 +532,7 @@ do_create() {
     [[ "$ssh_key" == *"skip"* ]] && ssh_key=""
   fi
 
-  name=$(gum input --header "Droplet name" --value "coder-dev")
+  name=$(gum input --header "Droplet name" --value "dev-box")
 
   local key_display="${ssh_key:-generated (via cloud-init)}"
   gum style --bold "Summary"
@@ -597,7 +597,7 @@ hetzner_create() {
     [[ "$ssh_key" == *"skip"* ]] && ssh_key=""
   fi
 
-  name=$(gum input --header "Server name" --value "coder-dev")
+  name=$(gum input --header "Server name" --value "dev-box")
 
   local key_display="${ssh_key:-generated (via cloud-init)}"
   gum style --bold "Summary"
