@@ -358,6 +358,24 @@ alias gs="git status"
 alias gd="git diff"
 alias gl="git log --oneline -20"
 [[ "\$PWD" == "\$HOME" ]] && cd ~/projects
+
+# First-login help: GitHub setup
+if ! gh auth status &>/dev/null 2>&1; then
+  echo ""
+  echo "  GitHub is not configured yet. To clone and push repositories:"
+  echo ""
+  echo "    1. Run:  gh auth login"
+  echo "    2. Select: GitHub.com > HTTPS > Login with a web browser"
+  echo "    3. Copy the code shown, open github.com/login/device on your phone"
+  echo "    4. Paste the code and approve"
+  echo ""
+  echo "  Then clone a repo:"
+  echo "    gh repo clone kalleeh/your-repo"
+  echo "    cd your-repo"
+  echo ""
+  echo "  Git pushes and pulls work automatically after login."
+  echo ""
+fi
 ZSHRC
 chown ${user}:${user} ${home_dir}/.zshrc
 
