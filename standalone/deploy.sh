@@ -67,7 +67,7 @@ setup_wireguard() {
 
   # Prompt for Bedrock credentials (optional)
   if gum confirm "Configure AWS Bedrock for Claude Code / Kiro CLI?"; then
-    BEDROCK_REGION=$(gum input --header "AWS Bedrock region" --value "us-east-1")
+    BEDROCK_REGION=$(gum input --header "AWS Bedrock region" --value "eu-north-1")
     BEDROCK_API_KEY=$(gum input --header "Bedrock API key (or leave empty for IAM role)" --password)
   fi
 
