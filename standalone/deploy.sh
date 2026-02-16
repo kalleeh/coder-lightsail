@@ -323,7 +323,16 @@ su - ${user} -c 'git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf 
 su - ${user} -c 'curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh'
 npm install -g @anthropic-ai/claude-code || true
 su - ${user} -c 'curl -fsSL https://cli.kiro.dev/install | bash || true'
+# GitHub CLI
+(type -p wget >/dev/null || apt-get install -y wget) && \
+  mkdir -p -m 755 /etc/apt/keyrings && \
+  wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null && \
+  echo "deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
+  apt-get update -y && apt-get install -y gh
 chsh -s /usr/bin/zsh ${user}
+# Git identity
+su - ${user} -c 'git config --global user.name "Karl Wallbom"'
+su - ${user} -c 'git config --global user.email "kalleeh@users.noreply.github.com"'
 USERTOOLS
 
     # Shell configs
