@@ -152,8 +152,23 @@ WGEOF
     mv "$tmp_insert" "$tmp_ci"
   fi
 
-  # Append WireGuard runcmd entries and firewall rules at the end
-  cat >> "$tmp_ci" <<'RUNCMD'
+  # Append WireGuard runcmd entries and firewall rules at the end.
+  # Providers with their own firewall (Lightsail, EC2) allow SSH from
+  # anywhere in ufw since the provider firewall is the outer security layer.
+  # Providers without a firewall (DO, Hetzner) restrict SSH to WireGuard only.
+  if [[ "$provider" == "lightsail" || "$provider" == "ec2" ]]; then
+    cat >> "$tmp_ci" <<'RUNCMD'
+
+  # -- WireGuard VPN --
+  - apt-get install -y wireguard
+  - systemctl enable --now wg-quick@wg0
+  - ufw default deny incoming
+  - ufw allow 51820/udp
+  - ufw allow 22/tcp
+  - ufw --force enable
+RUNCMD
+  else
+    cat >> "$tmp_ci" <<'RUNCMD'
 
   # -- WireGuard VPN --
   - apt-get install -y wireguard
@@ -163,6 +178,7 @@ WGEOF
   - ufw allow from 10.100.0.0/24 to any port 22
   - ufw --force enable
 RUNCMD
+  fi
 
   # Cloud-init completion marker (#8)
   echo "  - touch /var/lib/cloud/.cloud-init-complete" >> "$tmp_ci"
@@ -431,7 +447,7 @@ ec2_create() {
   setup_wireguard
   trap 'cleanup_wireguard' EXIT
   local wg_cloud_init
-  wg_cloud_init=$(build_cloud_init "$ssh_user")
+  wg_cloud_init=$(build_cloud_init "$ssh_user" "ec2")
 
   # Look up latest Ubuntu 24.04 AMI
   local ami
