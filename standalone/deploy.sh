@@ -184,22 +184,179 @@ RUNCMD
   echo "  - touch /var/lib/cloud/.cloud-init-complete" >> "$tmp_ci"
 
   # Lightsail doesn't support #cloud-config YAML natively.
-  # Its --user-data only accepts shell scripts. Wrap the cloud-init
-  # YAML in a script that writes it to disk and re-runs cloud-init.
+  # Its --user-data only accepts shell scripts. Convert the cloud-init
+  # config into an equivalent bash script instead of trying to re-run
+  # cloud-init (which causes infinite loops due to state resets).
   if [[ "$provider" == "lightsail" ]]; then
     local tmp_wrapper="$WG_TMPDIR/cloud-init-wrapper.sh"
-    {
-      echo "#!/bin/bash"
-      echo "cat > /etc/cloud/cloud.cfg.d/99-devbox.cfg << 'ENDOFCLOUDINIT'"
-      # Strip the #cloud-config header since it's now inside a shell script
-      tail -n +2 "$tmp_ci"
-      echo "ENDOFCLOUDINIT"
-      echo "cloud-init clean --logs"
-      echo "cloud-init init --local"
-      echo "cloud-init init"
-      echo "cloud-init modules --mode=config"
-      echo "cloud-init modules --mode=final"
-    } > "$tmp_wrapper"
+    # Extract the write_files paths and contents, runcmd entries,
+    # packages, and ssh_authorized_keys from the YAML and convert
+    # to a self-contained bash script.
+    cat > "$tmp_wrapper" << 'LIGHTSAIL_HEADER'
+#!/bin/bash
+set -x  # Log all commands for debugging
+export DEBIAN_FRONTEND=noninteractive
+LIGHTSAIL_HEADER
+
+    # Add SSH key
+    cat >> "$tmp_wrapper" << SSHKEY
+# SSH authorized key
+mkdir -p /home/${user}/.ssh
+echo '${SSH_PUBKEY}' >> /home/${user}/.ssh/authorized_keys
+chown -R ${user}:${user} /home/${user}/.ssh
+chmod 700 /home/${user}/.ssh
+chmod 600 /home/${user}/.ssh/authorized_keys
+SSHKEY
+
+    # SSH hardening
+    cat >> "$tmp_wrapper" << 'SSHD'
+# SSH hardening
+cat > /etc/ssh/sshd_config.d/99-hardening.conf << 'SSHCONF'
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin prohibit-password
+SSHCONF
+systemctl restart ssh
+SSHD
+
+    # System packages
+    cat >> "$tmp_wrapper" << 'PACKAGES'
+# System packages
+apt-get update -y
+apt-get upgrade -y
+apt-get install -y zsh tmux git curl jq htop build-essential unzip
+PACKAGES
+
+    # WireGuard config
+    cat >> "$tmp_wrapper" << WIREGUARD
+# WireGuard
+mkdir -p /etc/wireguard
+cat > /etc/wireguard/wg0.conf << 'WGCONF'
+[Interface]
+PrivateKey = ${WG_SERVER_PRIVKEY}
+Address = 10.100.0.1/24
+ListenPort = 51820
+WIREGUARD
+
+    # Add peers
+    for i in $(seq 1 "$WG_PEER_COUNT"); do
+      local idx=$((i - 1))
+      local peer_ip="10.100.0.$((i + 1))"
+      cat >> "$tmp_wrapper" << PEER
+
+[Peer]
+PublicKey = ${WG_PHONE_PUBKEYS[$idx]}
+AllowedIPs = ${peer_ip}/32
+PEER
+    done
+
+    cat >> "$tmp_wrapper" << 'WGSETUP'
+WGCONF
+chmod 600 /etc/wireguard/wg0.conf
+apt-get install -y wireguard
+systemctl enable --now wg-quick@wg0
+WGSETUP
+
+    # Node.js
+    cat >> "$tmp_wrapper" << 'NODEJS'
+# Node.js
+curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+apt-get install -y nodejs
+NODEJS
+
+    # User tools (run as target user)
+    local home_dir="/home/${user}"
+    [[ "$user" == "root" ]] && home_dir="/root"
+    cat >> "$tmp_wrapper" << USERTOOLS
+# User-space tools
+su - ${user} -c 'mkdir -p ~/.local/bin'
+su - ${user} -c 'curl -fsSL https://starship.rs/install.sh | sh -s -- --bin-dir ~/.local/bin --yes'
+su - ${user} -c 'git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf && ~/.fzf/install --bin --no-bash --no-fish --no-zsh'
+su - ${user} -c 'curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh'
+npm install -g @anthropic-ai/claude-code || true
+su - ${user} -c 'curl -fsSL https://cli.kiro.dev/install | bash || true'
+chsh -s /usr/bin/zsh ${user}
+USERTOOLS
+
+    # Shell configs
+    cat >> "$tmp_wrapper" << SHELLCONF
+# Shell configuration
+cat > ${home_dir}/.zshrc << 'ZSHRC'
+export PATH="\$HOME/.local/bin:\$HOME/.fzf/bin:\$PATH"
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+setopt share_history hist_ignore_dups hist_ignore_space
+bindkey -e
+bindkey '^[[A' history-search-backward
+bindkey '^[[B' history-search-forward
+autoload -Uz compinit && compinit -C
+eval "\$(starship init zsh)"
+[ -f ~/.fzf/bin/fzf ] && eval "\$(fzf --zsh 2>/dev/null)" || true
+eval "\$(zoxide init zsh)"
+alias ll="ls -la --color=auto"
+alias gs="git status"
+alias gd="git diff"
+alias gl="git log --oneline -20"
+[[ "\$PWD" == "\$HOME" ]] && cd ~/projects
+ZSHRC
+chown ${user}:${user} ${home_dir}/.zshrc
+
+mkdir -p ${home_dir}/.config
+cat > ${home_dir}/.config/starship.toml << 'STARSHIP'
+format = "\$directory\$git_branch\$git_status\$character"
+[directory]
+truncation_length = 3
+truncation_symbol = ".../"
+[git_branch]
+format = "[\$branch](\$style) "
+style = "bold purple"
+[git_status]
+format = '([\$all_status\$ahead_behind](\$style) )'
+style = "bold red"
+[character]
+success_symbol = "[>](bold green)"
+error_symbol = "[>](bold red)"
+STARSHIP
+chown ${user}:${user} ${home_dir}/.config/starship.toml
+
+cat > ${home_dir}/.tmux.conf << 'TMUX'
+set -g default-terminal "tmux-256color"
+set -ag terminal-overrides ",xterm-256color:RGB"
+set -g default-shell /usr/bin/zsh
+set -g mouse on
+set -g base-index 1
+setw -g pane-base-index 1
+set -g renumber-windows on
+unbind C-b
+set -g prefix C-a
+bind C-a send-prefix
+bind | split-window -h -c "#{pane_current_path}"
+bind - split-window -v -c "#{pane_current_path}"
+bind c new-window -c "#{pane_current_path}"
+set -g status-style "bg=default,fg=white"
+set -g status-left "#[bold]#S "
+set -g status-right ""
+set -g status-left-length 20
+set -g history-limit 50000
+TMUX
+chown ${user}:${user} ${home_dir}/.tmux.conf
+
+mkdir -p ${home_dir}/projects
+chown ${user}:${user} ${home_dir}/projects
+SHELLCONF
+
+    # Firewall
+    cat >> "$tmp_wrapper" << 'FIREWALL'
+# Firewall
+ufw default deny incoming
+ufw allow 51820/udp
+ufw allow 22/tcp
+ufw --force enable
+touch /var/lib/cloud/.cloud-init-complete
+FIREWALL
+
     echo "$tmp_wrapper"
     return
   fi
