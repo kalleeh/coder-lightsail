@@ -55,15 +55,32 @@ setup_wireguard() {
 
   WG_TMPDIR=$(mktemp -d)
 
-  # Generate SSH key pair for server access
-  ssh-keygen -t ed25519 -f "$WG_TMPDIR/ssh_key" -N "" -C "deploy-$(date +%Y%m%d)" -q
-  SSH_PUBKEY=$(cat "$WG_TMPDIR/ssh_key.pub")
+  # SSH key: reuse existing or generate new
+  local existing_keys
+  existing_keys=$(find "$SCRIPT_DIR" -maxdepth 1 -name "dev-box-*" ! -name "*.pub" -type f 2>/dev/null || true)
 
-  # Save SSH private key to the script directory
-  local key_name="dev-box-$(date +%Y%m%d-%H%M%S)"
-  SSH_PRIVKEY_FILE="${SCRIPT_DIR}/${key_name}"
-  cp "$WG_TMPDIR/ssh_key" "$SSH_PRIVKEY_FILE"
-  chmod 600 "$SSH_PRIVKEY_FILE"
+  local key_choice="Generate new key"
+  if [[ -n "$existing_keys" ]]; then
+    key_choice=$(echo "$existing_keys" "Generate new key" "Enter custom path" | tr ' ' '\n' | gum choose --header "SSH key")
+  else
+    key_choice=$(echo "Generate new key" "Enter custom path" | gum choose --header "SSH key")
+  fi
+
+  if [[ "$key_choice" == "Generate new key" ]]; then
+    ssh-keygen -t ed25519 -f "$WG_TMPDIR/ssh_key" -N "" -C "deploy-$(date +%Y%m%d)" -q
+    SSH_PUBKEY=$(cat "$WG_TMPDIR/ssh_key.pub")
+    local key_name="dev-box-$(date +%Y%m%d-%H%M%S)"
+    SSH_PRIVKEY_FILE="${SCRIPT_DIR}/${key_name}"
+    cp "$WG_TMPDIR/ssh_key" "$SSH_PRIVKEY_FILE"
+    chmod 600 "$SSH_PRIVKEY_FILE"
+  elif [[ "$key_choice" == "Enter custom path" ]]; then
+    SSH_PRIVKEY_FILE=$(gum input --header "Path to SSH private key")
+    [[ ! -f "$SSH_PRIVKEY_FILE" ]] && die "Key not found: $SSH_PRIVKEY_FILE"
+    SSH_PUBKEY=$(ssh-keygen -y -f "$SSH_PRIVKEY_FILE")
+  else
+    SSH_PRIVKEY_FILE="$key_choice"
+    SSH_PUBKEY=$(ssh-keygen -y -f "$SSH_PRIVKEY_FILE")
+  fi
 
   # Prompt for Bedrock credentials (optional)
   if gum confirm "Configure AWS Bedrock for Claude Code / Kiro CLI?"; then
