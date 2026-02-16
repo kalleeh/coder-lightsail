@@ -188,6 +188,7 @@ WGEOF
         echo "    content: |"
         echo "      export CLAUDE_CODE_USE_BEDROCK=1"
         echo "      export AWS_REGION=${BEDROCK_REGION}"
+        echo "      export ANTHROPIC_MODEL='eu.anthropic.claude-opus-4-6-v1:0'"
         if [[ -n "$BEDROCK_API_KEY" ]]; then
           echo "      export AWS_BEARER_TOKEN_BEDROCK=${BEDROCK_API_KEY}"
         fi
@@ -404,6 +405,7 @@ SHELLCONF
 cat > ${home_dir}/.ai-credentials << 'AIENV'
 export CLAUDE_CODE_USE_BEDROCK=1
 export AWS_REGION=${BEDROCK_REGION}
+export ANTHROPIC_MODEL='eu.anthropic.claude-opus-4-6-v1:0'
 AICREDS
 
       if [[ -n "$BEDROCK_API_KEY" ]]; then
