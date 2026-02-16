@@ -61,9 +61,9 @@ setup_wireguard() {
 
   local key_choice="Generate new key"
   if [[ -n "$existing_keys" ]]; then
-    key_choice=$(echo "$existing_keys" "Generate new key" "Enter custom path" | tr ' ' '\n' | gum choose --header "SSH key")
+    key_choice=$({ echo "$existing_keys"; echo "Generate new key"; echo "Enter custom path"; } | gum choose --header "SSH key")
   else
-    key_choice=$(echo "Generate new key" "Enter custom path" | gum choose --header "SSH key")
+    key_choice=$(printf "Generate new key\nEnter custom path\n" | gum choose --header "SSH key")
   fi
 
   if [[ "$key_choice" == "Generate new key" ]]; then
