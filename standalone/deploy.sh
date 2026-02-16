@@ -410,6 +410,13 @@ ufw allow 51820/udp
 ufw allow 22/tcp
 ufw --force enable
 touch /var/lib/cloud/.cloud-init-complete
+
+# Scrub secrets from user-data cache (API key was in this launch script)
+rm -f /var/lib/cloud/instance/scripts/part-001
+rm -f /var/lib/cloud/instance/user-data.txt
+rm -f /var/lib/cloud/instances/*/user-data.txt 2>/dev/null
+# Block metadata user-data endpoint (prevents curl to 169.254.169.254)
+iptables -A OUTPUT -d 169.254.169.254 -p tcp --dport 80 -m string --string "user-data" --algo bm -j DROP 2>/dev/null || true
 FIREWALL
 
     echo "$tmp_wrapper"
