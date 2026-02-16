@@ -35,12 +35,14 @@ require_cli() {
 
 styled_box() { gum style --border double --padding "1 2" --border-foreground 6 "$@"; }
 
-# ── WireGuard VPN + SSH key helpers ───────────────────────────────────────────
+# ── WireGuard VPN + SSH key + AI credentials helpers ─────────────────────────
 
 WG_TMPDIR=""
 WG_PEER_COUNT=1
 SSH_PUBKEY=""
 SSH_PRIVKEY_FILE=""
+BEDROCK_API_KEY=""
+BEDROCK_REGION=""
 
 # Arrays for multi-peer support
 declare -a WG_PHONE_PRIVKEYS=()
@@ -62,6 +64,12 @@ setup_wireguard() {
   SSH_PRIVKEY_FILE="${SCRIPT_DIR}/${key_name}"
   cp "$WG_TMPDIR/ssh_key" "$SSH_PRIVKEY_FILE"
   chmod 600 "$SSH_PRIVKEY_FILE"
+
+  # Prompt for Bedrock credentials (optional)
+  if gum confirm "Configure AWS Bedrock for Claude Code / Kiro CLI?"; then
+    BEDROCK_REGION=$(gum input --header "AWS Bedrock region" --value "us-east-1")
+    BEDROCK_API_KEY=$(gum input --header "Bedrock API key (or leave empty for IAM role)" --password)
+  fi
 
   # Generate WireGuard server key pair
   wg genkey | tee "$WG_TMPDIR/server.key" | wg pubkey > "$WG_TMPDIR/server.pub"
@@ -148,6 +156,27 @@ WGEOF
     head -n "$((runcmd_line - 1))" "$tmp_ci" > "$tmp_insert"
     cat "$wg_block_file" >> "$tmp_insert"
     echo "" >> "$tmp_insert"
+
+    # Add AI credentials file if configured
+    if [[ -n "$BEDROCK_REGION" ]]; then
+      local ai_home="/home/ubuntu"
+      [[ "$user" == "root" ]] && ai_home="/root"
+      local ai_content="export CLAUDE_CODE_USE_BEDROCK=1\nexport AWS_REGION=${BEDROCK_REGION}"
+      [[ -n "$BEDROCK_API_KEY" ]] && ai_content="${ai_content}\nexport AWS_BEARER_TOKEN_BEDROCK=${BEDROCK_API_KEY}"
+      {
+        echo "  # -- AI credentials (Claude Code / Kiro CLI) --"
+        echo "  - path: ${ai_home}/.ai-credentials"
+        echo "    owner: ${user}:${user}"
+        echo '    permissions: "0600"'
+        echo "    content: |"
+        echo "      export CLAUDE_CODE_USE_BEDROCK=1"
+        echo "      export AWS_REGION=${BEDROCK_REGION}"
+        if [[ -n "$BEDROCK_API_KEY" ]]; then
+          echo "      export AWS_BEARER_TOKEN_BEDROCK=${BEDROCK_API_KEY}"
+        fi
+        echo ""
+      } >> "$tmp_insert"
+    fi
     tail -n +"$runcmd_line" "$tmp_ci" >> "$tmp_insert"
     mv "$tmp_insert" "$tmp_ci"
   fi
@@ -284,6 +313,8 @@ USERTOOLS
 # Shell configuration
 cat > ${home_dir}/.zshrc << 'ZSHRC'
 export PATH="\$HOME/.local/bin:\$HOME/.fzf/bin:\$PATH"
+# Source AI credentials if present (Claude Code / Kiro CLI)
+[ -f ~/.ai-credentials ] && source ~/.ai-credentials
 HISTFILE=~/.zsh_history
 HISTSIZE=10000
 SAVEHIST=10000
@@ -346,6 +377,30 @@ chown ${user}:${user} ${home_dir}/.tmux.conf
 mkdir -p ${home_dir}/projects
 chown ${user}:${user} ${home_dir}/projects
 SHELLCONF
+
+    # AI credentials (Bedrock for Claude Code + Kiro CLI)
+    if [[ -n "$BEDROCK_REGION" ]]; then
+      local home_dir="/home/${user}"
+      [[ "$user" == "root" ]] && home_dir="/root"
+      cat >> "$tmp_wrapper" << AICREDS
+# AI credentials - secured env file sourced by .zshrc
+cat > ${home_dir}/.ai-credentials << 'AIENV'
+export CLAUDE_CODE_USE_BEDROCK=1
+export AWS_REGION=${BEDROCK_REGION}
+AICREDS
+
+      if [[ -n "$BEDROCK_API_KEY" ]]; then
+        cat >> "$tmp_wrapper" << AIKEY
+export AWS_BEARER_TOKEN_BEDROCK=${BEDROCK_API_KEY}
+AIKEY
+      fi
+
+      cat >> "$tmp_wrapper" << AIEND
+AIENV
+chmod 600 ${home_dir}/.ai-credentials
+chown ${user}:${user} ${home_dir}/.ai-credentials
+AIEND
+    fi
 
     # Firewall
     cat >> "$tmp_wrapper" << 'FIREWALL'

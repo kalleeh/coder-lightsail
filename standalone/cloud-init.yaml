@@ -36,6 +36,8 @@ write_files:
     permissions: "0644"
     content: |
       export PATH="$HOME/.local/bin:$HOME/.fzf/bin:$PATH"
+      # Source AI credentials if present (Claude Code / Kiro CLI)
+      [ -f ~/.ai-credentials ] && source ~/.ai-credentials
 
       # History
       HISTFILE=~/.zsh_history
