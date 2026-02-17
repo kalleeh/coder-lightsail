@@ -14,6 +14,7 @@
 # SSH keys
 *.pem
 standalone/dev-box-*
+standalone/wireguard-*.conf
 
 # macOS
 .DS_Store

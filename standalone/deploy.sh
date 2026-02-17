@@ -272,7 +272,9 @@ SSHD
 # System packages
 apt-get update -y
 apt-get upgrade -y
-apt-get install -y zsh tmux git curl jq htop build-essential unzip
+apt-get install -y zsh tmux git curl jq htop build-essential unzip unattended-upgrades
+# Enable automatic security updates
+dpkg-reconfigure -plow unattended-upgrades
 PACKAGES
 
     # WireGuard config
@@ -375,6 +377,11 @@ if ! gh auth status &>/dev/null 2>&1; then
   echo ""
   echo "  Git pushes and pulls work automatically after login."
   echo ""
+fi
+
+# Auto-attach to tmux session (survives disconnects)
+if command -v tmux &>/dev/null && [[ -z "\$TMUX" ]]; then
+  tmux new -A -s main
 fi
 ZSHRC
 chown ${user}:${user} ${home_dir}/.zshrc
@@ -513,7 +520,16 @@ PHONEEOF
     gum style --foreground 3 "Device ${i} config (in case QR doesn't scan):"
     echo "$phone_conf"
     echo ""
+
+    # Save config locally so QR can be regenerated later
+    local conf_file="${SCRIPT_DIR}/wireguard-device${i}.conf"
+    echo "$phone_conf" > "$conf_file"
+    chmod 600 "$conf_file"
   done
+
+  gum style --foreground 6 "WireGuard configs saved to ${SCRIPT_DIR}/wireguard-device*.conf"
+  gum style --foreground 6 "Regenerate QR anytime: qrencode -t ansiutf8 < wireguard-device1.conf"
+  echo ""
 
   styled_box \
     "SSH over WireGuard:" \

@@ -17,6 +17,7 @@ packages:
   - htop
   - build-essential
   - unzip
+  - unattended-upgrades
 
 # ── Configuration files ──────────────────────────────────────────────────────
 write_files:
@@ -89,6 +90,11 @@ write_files:
         echo ""
         echo "  Git pushes and pulls work automatically after login."
         echo ""
+      fi
+
+      # Auto-attach to tmux session (survives disconnects)
+      if command -v tmux &>/dev/null && [[ -z "$TMUX" ]]; then
+        tmux new -A -s main
       fi
 
   # -- Starship config (minimal, fast) --
