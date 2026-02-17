@@ -231,97 +231,34 @@ RUNCMD
   echo "  - touch /var/lib/cloud/.cloud-init-complete" >> "$tmp_ci"
 
   # Lightsail doesn't support #cloud-config YAML natively.
-  # Its --user-data only accepts shell scripts. Convert the cloud-init
-  # config into an equivalent bash script instead of trying to re-run
-  # cloud-init (which causes infinite loops due to state resets).
+  # Its --user-data only accepts shell scripts. We wrap the complete
+  # cloud-init YAML (already built above with all injections) in a
+  # thin bash script that writes it to disk and runs cloud-init's
+  # own modules to process it. No custom parser needed.
   if [[ "$provider" == "lightsail" ]]; then
     local tmp_wrapper="$WG_TMPDIR/cloud-init-wrapper.sh"
-    local home_dir="/home/${user}"
-    [[ "$user" == "root" ]] && home_dir="/root"
-
-    # Generate base script from cloud-init.yaml (single source of truth)
-    python3 "${SCRIPT_DIR}/cloud-init-to-bash.py" "$CLOUD_INIT" "$user" > "$tmp_wrapper"
-
-    # Append dynamic parts that depend on deploy-time secrets/keys
-    cat >> "$tmp_wrapper" << SSHKEY
-
-# SSH authorized key
-mkdir -p ${home_dir}/.ssh
-echo '${SSH_PUBKEY}' >> ${home_dir}/.ssh/authorized_keys
-chown -R ${user}:${user} ${home_dir}/.ssh
-chmod 700 ${home_dir}/.ssh
-chmod 600 ${home_dir}/.ssh/authorized_keys
-SSHKEY
-
-    # WireGuard
-    cat >> "$tmp_wrapper" << WIREGUARD
-
-# WireGuard
-mkdir -p /etc/wireguard
-cat > /etc/wireguard/wg0.conf << 'WGCONF'
-[Interface]
-PrivateKey = ${WG_SERVER_PRIVKEY}
-Address = 10.100.0.1/24
-ListenPort = 51820
-WIREGUARD
-
-    for i in $(seq 1 "$WG_PEER_COUNT"); do
-      local idx=$((i - 1))
-      local peer_ip="10.100.0.$((i + 1))"
-      cat >> "$tmp_wrapper" << PEER
-
-[Peer]
-PublicKey = ${WG_PHONE_PUBKEYS[$idx]}
-AllowedIPs = ${peer_ip}/32
-PEER
-    done
-
-    cat >> "$tmp_wrapper" << 'WGSETUP'
-WGCONF
-chmod 600 /etc/wireguard/wg0.conf
-apt-get install -y wireguard
-systemctl enable --now wg-quick@wg0
-WGSETUP
-
-    # AI credentials
-    if [[ -n "$BEDROCK_REGION" ]]; then
-      cat >> "$tmp_wrapper" << AICREDS
-
-# AI credentials - secured env file sourced by .zshrc
-cat > ${home_dir}/.ai-credentials << 'AIENV'
-export CLAUDE_CODE_USE_BEDROCK=1
-export AWS_REGION=${BEDROCK_REGION}
-export ANTHROPIC_MODEL='eu.anthropic.claude-opus-4-6-v1:0'
-AICREDS
-      if [[ -n "$BEDROCK_API_KEY" ]]; then
-        cat >> "$tmp_wrapper" << AIKEY
-export AWS_BEARER_TOKEN_BEDROCK=${BEDROCK_API_KEY}
-AIKEY
-      fi
-      cat >> "$tmp_wrapper" << AIEND
-AIENV
-chmod 600 ${home_dir}/.ai-credentials
-chown ${user}:${user} ${home_dir}/.ai-credentials
-AIEND
-    fi
-
-    # Firewall + cleanup
-    cat >> "$tmp_wrapper" << 'FIREWALL'
-
-# Firewall
-ufw default deny incoming
-ufw allow 51820/udp
-ufw allow 22/tcp
-ufw --force enable
-touch /var/lib/cloud/.cloud-init-complete
-
-# Scrub secrets from user-data cache
-rm -f /var/lib/cloud/instance/scripts/part-001
-rm -f /var/lib/cloud/instance/user-data.txt
-rm -f /var/lib/cloud/instances/*/user-data.txt 2>/dev/null
-iptables -A OUTPUT -d 169.254.169.254 -p tcp --dport 80 -m string --string "user-data" --algo bm -j DROP 2>/dev/null || true
-FIREWALL
-
+    {
+      echo "#!/bin/bash"
+      echo "set -x"
+      echo ""
+      echo "# Write the complete cloud-init config"
+      echo "cat > /etc/cloud/cloud.cfg.d/99-devbox.cfg << 'ENDOFCLOUDINIT'"
+      # Paste the fully-built cloud-init YAML (minus the #cloud-config header)
+      tail -n +2 "$tmp_ci"
+      echo "ENDOFCLOUDINIT"
+      echo ""
+      echo "# Process using cloud-init's own modules"
+      echo "# --frequency always forces execution even if modules already ran"
+      echo "cloud-init single --name write_files --frequency always"
+      echo "cloud-init single --name package_update_upgrade_install --frequency always"
+      echo "cloud-init single --name runcmd --frequency always"
+      echo ""
+      echo "# Scrub secrets from user-data cache"
+      echo "rm -f /var/lib/cloud/instance/scripts/part-001"
+      echo "rm -f /var/lib/cloud/instance/user-data.txt"
+      echo "rm -f /var/lib/cloud/instances/*/user-data.txt 2>/dev/null"
+      echo "iptables -A OUTPUT -d 169.254.169.254 -p tcp --dport 80 -m string --string \"user-data\" --algo bm -j DROP 2>/dev/null || true"
+    } > "$tmp_wrapper"
     echo "$tmp_wrapper"
     return
   fi
