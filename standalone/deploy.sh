@@ -236,49 +236,26 @@ RUNCMD
   # cloud-init (which causes infinite loops due to state resets).
   if [[ "$provider" == "lightsail" ]]; then
     local tmp_wrapper="$WG_TMPDIR/cloud-init-wrapper.sh"
-    # Extract the write_files paths and contents, runcmd entries,
-    # packages, and ssh_authorized_keys from the YAML and convert
-    # to a self-contained bash script.
-    cat > "$tmp_wrapper" << 'LIGHTSAIL_HEADER'
-#!/bin/bash
-set -x  # Log all commands for debugging
-export DEBIAN_FRONTEND=noninteractive
-LIGHTSAIL_HEADER
+    local home_dir="/home/${user}"
+    [[ "$user" == "root" ]] && home_dir="/root"
 
-    # Add SSH key
+    # Generate base script from cloud-init.yaml (single source of truth)
+    python3 "${SCRIPT_DIR}/cloud-init-to-bash.py" "$CLOUD_INIT" "$user" > "$tmp_wrapper"
+
+    # Append dynamic parts that depend on deploy-time secrets/keys
     cat >> "$tmp_wrapper" << SSHKEY
+
 # SSH authorized key
-mkdir -p /home/${user}/.ssh
-echo '${SSH_PUBKEY}' >> /home/${user}/.ssh/authorized_keys
-chown -R ${user}:${user} /home/${user}/.ssh
-chmod 700 /home/${user}/.ssh
-chmod 600 /home/${user}/.ssh/authorized_keys
+mkdir -p ${home_dir}/.ssh
+echo '${SSH_PUBKEY}' >> ${home_dir}/.ssh/authorized_keys
+chown -R ${user}:${user} ${home_dir}/.ssh
+chmod 700 ${home_dir}/.ssh
+chmod 600 ${home_dir}/.ssh/authorized_keys
 SSHKEY
 
-    # SSH hardening
-    cat >> "$tmp_wrapper" << 'SSHD'
-# SSH hardening
-cat > /etc/ssh/sshd_config.d/99-hardening.conf << 'SSHCONF'
-PasswordAuthentication no
-KbdInteractiveAuthentication no
-PubkeyAuthentication yes
-PermitRootLogin prohibit-password
-SSHCONF
-systemctl restart ssh
-SSHD
-
-    # System packages
-    cat >> "$tmp_wrapper" << 'PACKAGES'
-# System packages
-apt-get update -y
-apt-get upgrade -y
-apt-get install -y zsh tmux git curl jq htop build-essential unzip unattended-upgrades
-# Enable automatic security updates
-dpkg-reconfigure -plow unattended-upgrades
-PACKAGES
-
-    # WireGuard config
+    # WireGuard
     cat >> "$tmp_wrapper" << WIREGUARD
+
 # WireGuard
 mkdir -p /etc/wireguard
 cat > /etc/wireguard/wg0.conf << 'WGCONF'
@@ -288,7 +265,6 @@ Address = 10.100.0.1/24
 ListenPort = 51820
 WIREGUARD
 
-    # Add peers
     for i in $(seq 1 "$WG_PEER_COUNT"); do
       local idx=$((i - 1))
       local peer_ip="10.100.0.$((i + 1))"
@@ -307,147 +283,21 @@ apt-get install -y wireguard
 systemctl enable --now wg-quick@wg0
 WGSETUP
 
-    # Node.js
-    cat >> "$tmp_wrapper" << 'NODEJS'
-# Node.js
-curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
-apt-get install -y nodejs
-NODEJS
-
-    # User tools (run as target user)
-    local home_dir="/home/${user}"
-    [[ "$user" == "root" ]] && home_dir="/root"
-    cat >> "$tmp_wrapper" << USERTOOLS
-# User-space tools
-su - ${user} -c 'mkdir -p ~/.local/bin'
-su - ${user} -c 'curl -fsSL https://starship.rs/install.sh | sh -s -- --bin-dir ~/.local/bin --yes'
-su - ${user} -c 'git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf && ~/.fzf/install --bin --no-bash --no-fish --no-zsh'
-su - ${user} -c 'curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh'
-npm install -g @anthropic-ai/claude-code || true
-su - ${user} -c 'curl -fsSL https://cli.kiro.dev/install | bash || true'
-# GitHub CLI
-(type -p wget >/dev/null || apt-get install -y wget) && \
-  mkdir -p -m 755 /etc/apt/keyrings && \
-  wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null && \
-  echo "deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
-  apt-get update -y && apt-get install -y gh
-chsh -s /usr/bin/zsh ${user}
-# Git identity
-su - ${user} -c 'git config --global user.name "Karl Wallbom"'
-su - ${user} -c 'git config --global user.email "kalleeh@users.noreply.github.com"'
-USERTOOLS
-
-    # Shell configs
-    cat >> "$tmp_wrapper" << SHELLCONF
-# Shell configuration
-cat > ${home_dir}/.zshrc << 'ZSHRC'
-export PATH="\$HOME/.local/bin:\$HOME/.fzf/bin:\$PATH"
-# Source AI credentials if present (Claude Code / Kiro CLI)
-[ -f ~/.ai-credentials ] && source ~/.ai-credentials
-HISTFILE=~/.zsh_history
-HISTSIZE=10000
-SAVEHIST=10000
-setopt share_history hist_ignore_dups hist_ignore_space
-bindkey -e
-bindkey '^[[A' history-search-backward
-bindkey '^[[B' history-search-forward
-autoload -Uz compinit && compinit -C
-eval "\$(starship init zsh)"
-[ -f ~/.fzf/bin/fzf ] && eval "\$(fzf --zsh 2>/dev/null)" || true
-eval "\$(zoxide init zsh)"
-alias ll="ls -la --color=auto"
-alias gs="git status"
-alias gd="git diff"
-alias gl="git log --oneline -20"
-[[ "\$PWD" == "\$HOME" ]] && cd ~/projects
-
-# First-login help: GitHub setup
-if ! gh auth status &>/dev/null 2>&1; then
-  echo ""
-  echo "  GitHub is not configured yet. To clone and push repositories:"
-  echo ""
-  echo "    1. Run:  gh auth login"
-  echo "    2. Select: GitHub.com > HTTPS > Login with a web browser"
-  echo "    3. Copy the code shown, open github.com/login/device on your phone"
-  echo "    4. Paste the code and approve"
-  echo ""
-  echo "  Then clone a repo:"
-  echo "    gh repo clone kalleeh/your-repo"
-  echo "    cd your-repo"
-  echo ""
-  echo "  Git pushes and pulls work automatically after login."
-  echo ""
-fi
-
-# Auto-attach to tmux session (survives disconnects)
-if command -v tmux &>/dev/null && [[ -z "\$TMUX" ]]; then
-  tmux new -A -s main
-fi
-ZSHRC
-chown ${user}:${user} ${home_dir}/.zshrc
-
-mkdir -p ${home_dir}/.config
-cat > ${home_dir}/.config/starship.toml << 'STARSHIP'
-format = "\$directory\$git_branch\$git_status\$character"
-[directory]
-truncation_length = 3
-truncation_symbol = ".../"
-[git_branch]
-format = "[\$branch](\$style) "
-style = "bold purple"
-[git_status]
-format = '([\$all_status\$ahead_behind](\$style) )'
-style = "bold red"
-[character]
-success_symbol = "[>](bold green)"
-error_symbol = "[>](bold red)"
-STARSHIP
-chown ${user}:${user} ${home_dir}/.config/starship.toml
-
-cat > ${home_dir}/.tmux.conf << 'TMUX'
-set -g default-terminal "tmux-256color"
-set -ag terminal-overrides ",xterm-256color:RGB"
-set -g default-shell /usr/bin/zsh
-set -g mouse on
-set -g base-index 1
-setw -g pane-base-index 1
-set -g renumber-windows on
-unbind C-b
-set -g prefix C-a
-bind C-a send-prefix
-bind | split-window -h -c "#{pane_current_path}"
-bind - split-window -v -c "#{pane_current_path}"
-bind c new-window -c "#{pane_current_path}"
-set -g status-style "bg=default,fg=white"
-set -g status-left "#[bold]#S "
-set -g status-right ""
-set -g status-left-length 20
-set -g history-limit 50000
-TMUX
-chown ${user}:${user} ${home_dir}/.tmux.conf
-
-mkdir -p ${home_dir}/projects
-chown ${user}:${user} ${home_dir}/projects
-SHELLCONF
-
-    # AI credentials (Bedrock for Claude Code + Kiro CLI)
+    # AI credentials
     if [[ -n "$BEDROCK_REGION" ]]; then
-      local home_dir="/home/${user}"
-      [[ "$user" == "root" ]] && home_dir="/root"
       cat >> "$tmp_wrapper" << AICREDS
+
 # AI credentials - secured env file sourced by .zshrc
 cat > ${home_dir}/.ai-credentials << 'AIENV'
 export CLAUDE_CODE_USE_BEDROCK=1
 export AWS_REGION=${BEDROCK_REGION}
 export ANTHROPIC_MODEL='eu.anthropic.claude-opus-4-6-v1:0'
 AICREDS
-
       if [[ -n "$BEDROCK_API_KEY" ]]; then
         cat >> "$tmp_wrapper" << AIKEY
 export AWS_BEARER_TOKEN_BEDROCK=${BEDROCK_API_KEY}
 AIKEY
       fi
-
       cat >> "$tmp_wrapper" << AIEND
 AIENV
 chmod 600 ${home_dir}/.ai-credentials
@@ -455,8 +305,9 @@ chown ${user}:${user} ${home_dir}/.ai-credentials
 AIEND
     fi
 
-    # Firewall
+    # Firewall + cleanup
     cat >> "$tmp_wrapper" << 'FIREWALL'
+
 # Firewall
 ufw default deny incoming
 ufw allow 51820/udp
@@ -464,11 +315,10 @@ ufw allow 22/tcp
 ufw --force enable
 touch /var/lib/cloud/.cloud-init-complete
 
-# Scrub secrets from user-data cache (API key was in this launch script)
+# Scrub secrets from user-data cache
 rm -f /var/lib/cloud/instance/scripts/part-001
 rm -f /var/lib/cloud/instance/user-data.txt
 rm -f /var/lib/cloud/instances/*/user-data.txt 2>/dev/null
-# Block metadata user-data endpoint (prevents curl to 169.254.169.254)
 iptables -A OUTPUT -d 169.254.169.254 -p tcp --dport 80 -m string --string "user-data" --algo bm -j DROP 2>/dev/null || true
 FIREWALL
 
