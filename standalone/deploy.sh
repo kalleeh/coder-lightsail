@@ -110,6 +110,11 @@ build_cloud_init() {
   local tmp_ci="$WG_TMPDIR/cloud-init-wg.yaml"
   cp "$CLOUD_INIT" "$tmp_ci"
 
+  # Add wireguard to packages list
+  sed -i.bak '/^packages:/a\
+  - wireguard
+' "$tmp_ci" && rm -f "$tmp_ci.bak"
+
   # Inject generated SSH public key into cloud-init as a top-level directive.
   # Must be inserted near the top (after #cloud-config), not appended at the end,
   # because appending would place it inside or after the runcmd block.
@@ -204,10 +209,12 @@ WGEOF
   # anywhere in ufw since the provider firewall is the outer security layer.
   # Providers without a firewall (DO, Hetzner) restrict SSH to WireGuard only.
   if [[ "$provider" == "lightsail" || "$provider" == "ec2" ]]; then
-    cat >> "$tmp_ci" <<'RUNCMD'
+    cat >> "$tmp_ci" <<RUNCMD
+
+  # -- SSH key injection (Lightsail overrides ssh_authorized_keys) --
+  - echo "${SSH_PUBKEY}" >> /home/${user}/.ssh/authorized_keys
 
   # -- WireGuard VPN --
-  - apt-get install -y wireguard
   - systemctl enable --now wg-quick@wg0
   - ufw default deny incoming
   - ufw allow 51820/udp
@@ -215,10 +222,12 @@ WGEOF
   - ufw --force enable
 RUNCMD
   else
-    cat >> "$tmp_ci" <<'RUNCMD'
+    cat >> "$tmp_ci" <<RUNCMD
+
+  # -- SSH key injection --
+  - echo "${SSH_PUBKEY}" >> /home/${user}/.ssh/authorized_keys
 
   # -- WireGuard VPN --
-  - apt-get install -y wireguard
   - systemctl enable --now wg-quick@wg0
   - ufw default deny incoming
   - ufw allow 51820/udp
@@ -253,6 +262,9 @@ RUNCMD
       echo "cloud-init single --name package_update_upgrade_install --frequency always"
       echo "cloud-init single --name runcmd --frequency always"
       echo ""
+      echo "# Execute runcmd script (cloud-init single doesn't actually run it)"
+      echo "bash /var/lib/cloud/instances/*/scripts/runcmd || true"
+      echo ""
       echo "# Scrub secrets from user-data cache"
       echo "rm -f /var/lib/cloud/instance/scripts/part-001"
       echo "rm -f /var/lib/cloud/instance/user-data.txt"
@@ -269,7 +281,12 @@ RUNCMD
 show_qr() {
   local server_ip="$1" ssh_user="$2"
 
-  gum style --bold --foreground 2 "WireGuard VPN configured!"
+  echo ""
+  gum style --bold --foreground 2 "✓ Deployment complete!"
+  echo ""
+  gum style --bold --foreground 6 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  gum style --bold --foreground 6 "  WireGuard VPN Setup"
+  gum style --bold --foreground 6 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
 
   # Show QR code for each device
@@ -294,18 +311,26 @@ PHONEEOF
 
     if [[ "$WG_PEER_COUNT" -gt 1 ]]; then
       gum style --bold --foreground 6 "── Device ${i} of ${WG_PEER_COUNT} ──"
+      echo ""
     fi
 
-    gum style --bold "1. Scan this QR code with the WireGuard app"
-    gum style --bold "2. Enable the tunnel"
-    gum style --bold "3. Connect:  ssh ${ssh_user}@10.100.0.1"
+    gum style --bold "📱 Step 1: Scan QR code with WireGuard app"
+    gum style --bold "🔌 Step 2: Enable the tunnel"
+    gum style --bold "🔐 Step 3: SSH via VPN tunnel"
+    echo ""
+    
+    if [[ -n "$SSH_PRIVKEY_FILE" ]]; then
+      gum style --foreground 2 "   ssh -i ${SSH_PRIVKEY_FILE} ${ssh_user}@10.100.0.1"
+    else
+      gum style --foreground 2 "   ssh ${ssh_user}@10.100.0.1"
+    fi
     echo ""
 
     echo "$phone_conf" | qrencode -t ansiutf8
     echo ""
 
-    gum style --foreground 3 "Device ${i} config (in case QR doesn't scan):"
-    echo "$phone_conf"
+    gum style --foreground 8 "Manual config (if QR doesn't scan):"
+    gum style --foreground 8 "$phone_conf"
     echo ""
 
     # Save config locally so QR can be regenerated later
@@ -419,6 +444,18 @@ lightsail_create() {
   local key_display="${key_name:-generated (via cloud-init)}"
   gum style --bold "Summary"
   styled_box "Provider: AWS Lightsail" "Region:   $region" "Bundle:   $bundle" "SSH key:  $key_display" "Name:     $name"
+  
+  # Check if instance already exists
+  if aws lightsail get-instance --instance-name "$name" --region "$region" &>/dev/null; then
+    gum style --foreground 3 "⚠ Instance '$name' already exists in $region"
+    if ! gum confirm "Delete existing instance and recreate?"; then
+      exit 0
+    fi
+    gum spin --title "Deleting existing instance..." -- \
+      aws lightsail delete-instance --instance-name "$name" --region "$region"
+    sleep 5
+  fi
+  
   gum confirm "Create this instance?" || exit 0
 
   # Set up WireGuard keys and build modified cloud-init
@@ -430,7 +467,7 @@ lightsail_create() {
   local key_flag=()
   [[ -n "$key_name" ]] && key_flag=(--key-pair-name "$key_name")
 
-  gum spin --title "Creating Lightsail instance '$name'..." -- \
+  if ! gum spin --title "Creating Lightsail instance '$name'..." -- \
     aws lightsail create-instances \
       --instance-names "$name" \
       --availability-zone "${region}a" \
@@ -438,7 +475,9 @@ lightsail_create() {
       --bundle-id "$bundle" \
       "${key_flag[@]}" \
       --user-data "$(cat "$wg_cloud_init")" \
-      --region "$region"
+      --region "$region" 2>&1; then
+    die "Failed to create instance. Instance '$name' may already exist in region $region."
+  fi
 
   gum spin --title "Waiting for instance to be running..." -- \
     aws lightsail wait instance-running --instance-name "$name" --region "$region" 2>/dev/null || sleep 15
@@ -461,7 +500,22 @@ lightsail_create() {
   ip=$(aws lightsail get-static-ip --static-ip-name "$static_ip_name" --region "$region" \
        --query 'staticIp.ipAddress' --output text)
 
+  gum style --foreground 6 "⏳ Waiting for cloud-init to complete (2-5 minutes)..."
+  gum style --foreground 8 "   Installing packages, configuring WireGuard, setting up dev tools..."
+  echo ""
+  
   show_qr "$ip" "$ssh_user"
+  
+  # Verify WireGuard is running (optional check after user has time to connect)
+  echo ""
+  if gum confirm "Verify WireGuard is running? (requires WireGuard tunnel active)"; then
+    gum style --foreground 6 "Testing WireGuard connection..."
+    if timeout 5 ping -c 1 10.100.0.1 &>/dev/null; then
+      gum style --foreground 2 "✓ WireGuard tunnel is working!"
+    else
+      gum style --foreground 3 "⚠ Cannot reach 10.100.0.1 - make sure WireGuard tunnel is active on your device"
+    fi
+  fi
 }
 
 lightsail_destroy() {
@@ -551,13 +605,15 @@ ec2_create() {
   [[ -n "$key_name" ]] && key_flag=(--key-name "$key_name")
 
   local instance_id
-  instance_id=$(gum spin --title "Launching EC2 instance..." --show-output -- \
+  if ! instance_id=$(gum spin --title "Launching EC2 instance..." --show-output -- \
     aws ec2 run-instances --region "$region" \
       --image-id "$ami" --instance-type "$itype" \
       "${key_flag[@]}" --security-group-ids "$sg_id" \
       --user-data "file://${wg_cloud_init}" \
       --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$name}]" \
-      --query 'Instances[0].InstanceId' --output text)
+      --query 'Instances[0].InstanceId' --output text 2>&1); then
+    die "Failed to launch EC2 instance: $instance_id"
+  fi
 
   gum spin --title "Waiting for instance to be running..." -- \
     aws ec2 wait instance-running --region "$region" --instance-ids "$instance_id"
@@ -658,11 +714,13 @@ do_create() {
   local key_flag=()
   [[ -n "$ssh_key" ]] && key_flag=(--ssh-keys "$ssh_key")
 
-  droplet_id=$(gum spin --title "Creating droplet '$name'..." --show-output -- \
+  if ! droplet_id=$(gum spin --title "Creating droplet '$name'..." --show-output -- \
     doctl compute droplet create "$name" \
       --region "$region" --size "$size" --image ubuntu-24-04-x64 \
       "${key_flag[@]}" --user-data-file "$wg_cloud_init" \
-      --wait --format ID --no-header)
+      --wait --format ID --no-header 2>&1); then
+    die "Failed to create droplet. Droplet '$name' may already exist or quota exceeded."
+  fi
 
   # DigitalOcean droplet IPs are already static (don't change on reboot)
   local ip
@@ -723,11 +781,13 @@ hetzner_create() {
   [[ -n "$ssh_key" ]] && key_flag=(--ssh-key "$ssh_key")
 
   local result
-  result=$(gum spin --title "Creating server '$name'..." --show-output -- \
+  if ! result=$(gum spin --title "Creating server '$name'..." --show-output -- \
     hcloud server create --name "$name" \
       --type "$stype" --image ubuntu-24.04 \
       --location "$location" "${key_flag[@]}" \
-      --user-data-from-file "$wg_cloud_init")
+      --user-data-from-file "$wg_cloud_init" 2>&1); then
+    die "Failed to create server. Server '$name' may already exist or quota exceeded."
+  fi
 
   # Hetzner cloud server IPs are already static
   local ip

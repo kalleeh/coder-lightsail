@@ -124,6 +124,99 @@ The deploy script configures a locked-down firewall (UFW) on every cloud instanc
 
 For manual deploys (pasting `cloud-init.yaml` directly), the WireGuard configuration is not included and SSH is accessible on the public IP. You should restrict access with your provider's firewall or security group rules.
 
+## Troubleshooting
+
+### Cloud-init is still running
+
+Cloud-init takes 2-5 minutes to complete. Check status:
+
+```bash
+ssh ubuntu@10.100.0.1 'cloud-init status'
+# Output: "status: running" or "status: done"
+```
+
+Wait for completion:
+
+```bash
+ssh ubuntu@10.100.0.1 'cloud-init status --wait'
+```
+
+View logs:
+
+```bash
+ssh ubuntu@10.100.0.1 'tail -f /var/log/cloud-init-output.log'
+```
+
+### WireGuard tunnel shows "connected" but SSH times out
+
+Check if WireGuard handshake is working in the WireGuard app:
+- Look for "Latest Handshake" - should show a recent timestamp (< 2 minutes)
+- Check "Transfer" - should show bytes sent/received
+- If handshake shows "never", the server's WireGuard isn't running
+
+Verify WireGuard is running on the server (requires temporary SSH access via public IP):
+
+```bash
+# Open SSH port temporarily
+aws lightsail put-instance-public-ports --instance-name dev-box --region eu-north-1 \
+  --port-infos '[{"fromPort":22,"toPort":22,"protocol":"tcp"},{"fromPort":51820,"toPort":51820,"protocol":"udp"}]'
+
+# Check WireGuard status
+ssh -i ~/Downloads/LightsailDefaultKey-eu-north-1.pem ubuntu@<public-ip> \
+  'sudo systemctl status wg-quick@wg0'
+
+# Close SSH port
+aws lightsail put-instance-public-ports --instance-name dev-box --region eu-north-1 \
+  --port-infos '[{"fromPort":51820,"toPort":51820,"protocol":"udp"}]'
+```
+
+### SSH key authentication fails
+
+Verify your key is in authorized_keys:
+
+```bash
+ssh -i ~/Downloads/LightsailDefaultKey-eu-north-1.pem ubuntu@<public-ip> \
+  'cat ~/.ssh/authorized_keys'
+```
+
+If your generated key is missing, it wasn't injected properly. This is fixed in the latest deploy.sh.
+
+### Regenerate WireGuard QR code
+
+If you lost the QR code, regenerate it from the saved config:
+
+```bash
+cd standalone
+qrencode -t ansiutf8 < wireguard-device1.conf
+```
+
+### Instance name already exists
+
+If deployment fails with "Instance already exists", either:
+
+1. Delete the existing instance:
+   ```bash
+   aws lightsail delete-instance --instance-name dev-box --region eu-north-1
+   ```
+
+2. Use a different name when prompted during deployment
+
+### Check what's installed
+
+```bash
+# Verify packages
+dpkg -l | grep -E 'wireguard|tmux|zsh'
+
+# Check Node.js
+node --version
+
+# Check Claude Code
+claude-code --version
+
+# Check Kiro CLI
+kiro-cli --version
+```
+
 ## How to customize
 
 - **Add packages**: Append to the `packages:` list.
